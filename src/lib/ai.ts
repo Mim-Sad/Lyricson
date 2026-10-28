@@ -67,7 +67,68 @@ export function extractJson(raw: string): unknown | null {
       // try the next slice
     }
   }
+  // Models sometimes run out of tokens mid-answer: close what is open and keep what was written.
+  const start = [objectStart, arrayStart].filter((index) => index >= 0).sort((a, b) => a - b)[0];
+  if (start !== undefined) {
+    const repaired = repairTruncatedJson(text.slice(start));
+    if (repaired) {
+      try {
+        return JSON.parse(repaired);
+      } catch {
+        // give up below
+      }
+    }
+  }
   return null;
+}
+
+/** Closes an unterminated string and any open brackets; drops a dangling key or comma. */
+export function repairTruncatedJson(input: string): string | null {
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+  let lastSafe = -1;
+  for (let index = 0; index < input.length; index++) {
+    const char = input[index] as string;
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === '{') stack.push('}');
+    else if (char === '[') stack.push(']');
+    else if (char === '}' || char === ']') {
+      stack.pop();
+      lastSafe = index;
+    } else if (char === ',') lastSafe = index - 1;
+  }
+  if (stack.length === 0 && !inString) return null;
+  let body = input;
+  if (inString) {
+    // Cut back to the last complete value instead of guessing the rest of a string.
+    if (lastSafe < 0) return null;
+    body = input.slice(0, lastSafe + 1);
+    // Recompute the open brackets for the shortened text.
+    const open: string[] = [];
+    let str = false;
+    let esc = false;
+    for (const char of body) {
+      if (str) {
+        if (esc) esc = false;
+        else if (char === '\\') esc = true;
+        else if (char === '"') str = false;
+        continue;
+      }
+      if (char === '"') str = true;
+      else if (char === '{') open.push('}');
+      else if (char === '[') open.push(']');
+      else if (char === '}' || char === ']') open.pop();
+    }
+    return `${body.replace(/,\s*$/, '')}${open.reverse().join('')}`;
+  }
+  return `${body.replace(/,\s*$/, '')}${stack.reverse().join('')}`;
 }
 
 /** Maps a model payload onto the source lines, index first then order. */
@@ -202,6 +263,7 @@ export async function postChat(
   ai: AiConfig,
   body: Record<string, unknown>,
   fetcher: typeof fetch,
+  timeoutMs = AI_TIMEOUT_MS,
 ): Promise<ChatResponse> {
   let response: Response;
   try {
@@ -209,7 +271,7 @@ export async function postChat(
       method: 'POST',
       headers: headersFor(ai),
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(AI_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
     const timedOut = error instanceof Error && /abort|timeout/i.test(error.message);

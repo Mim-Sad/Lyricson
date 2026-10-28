@@ -13,6 +13,7 @@ import {
   renderScreen,
   type AdminInputField,
   type AdminScreen,
+  type PanelExtras,
 } from './lib/admin-panel.js';
 import { escapeHtml } from './lib/format.js';
 import {
@@ -28,8 +29,11 @@ import {
   dayKey,
   ensureSchema,
   getAdminState,
+  markNotified,
+  pendingRecipients,
   pruneCaches,
   setAdminState,
+  userCounts,
 } from './lib/store.js';
 import {
   clearAdminCommands,
@@ -60,8 +64,9 @@ async function showScreen(
   snapshot: Awaited<ReturnType<typeof loadSettings>>,
   cfg: Config,
   flash?: string,
+  extras: PanelExtras = {},
 ): Promise<void> {
-  const panel = renderScreen(screen, snapshot, cfg);
+  const panel = renderScreen(screen, snapshot, cfg, extras);
   const text = flash ? `${flash}\n\n${panel.text}` : panel.text;
   const message = ctx.callbackQuery?.message;
   if (message) {
@@ -87,7 +92,9 @@ async function refresh(
   flash?: string,
 ): Promise<void> {
   const snapshot = await loadSettings(env, cfg, { fresh: true });
-  await showScreen(ctx, screen, snapshot, cfg, flash);
+  const extras: PanelExtras =
+    screen === 'broadcast' ? { users: await userCounts(env.DB, snapshot.broadcast.id).catch(() => undefined) } : {};
+  await showScreen(ctx, screen, snapshot, cfg, flash, extras);
 }
 
 async function askForInput(
@@ -281,6 +288,70 @@ export async function handleAdminCallback(
       return true;
     }
 
+    case 'broadcastClear': {
+      await saveSettings(env, { broadcast_draft: null, broadcast_id: null });
+      await refresh(ctx, env, cfg, 'broadcast', '🗑 پیش‌نویس حذف شد.');
+      return true;
+    }
+
+    case 'broadcastTest': {
+      const snapshot = await loadSettings(env, cfg, { fresh: true });
+      if (!snapshot.broadcast.draft || !userId) {
+        await refresh(ctx, env, cfg, 'broadcast', '⛔️ اول پیامی بنویس.');
+        return true;
+      }
+      try {
+        await ctx.api.sendMessage(userId, snapshot.broadcast.draft, HTML);
+        await refresh(ctx, env, cfg, 'broadcast', '🧪 نمونه برایت فرستاده شد.');
+      } catch (error) {
+        await refresh(ctx, env, cfg, 'broadcast', `⛔️ تلگرام این پیام را نپذیرفت: ${escapeHtml(error instanceof Error ? error.message : 'خطا')}`);
+      }
+      return true;
+    }
+
+    case 'broadcastSend': {
+      const snapshot = await loadSettings(env, cfg, { fresh: true });
+      const { draft, id } = snapshot.broadcast;
+      if (!draft || !id) {
+        await refresh(ctx, env, cfg, 'broadcast', '⛔️ اول پیامی بنویس.');
+        return true;
+      }
+      // Background work is limited to ~30 s, so send in time-boxed rounds; pressing again continues.
+      const deadline = Date.now() + 22_000;
+      let sent = 0;
+      let blocked = 0;
+      let fatal = '';
+      while (Date.now() < deadline && !fatal) {
+        const batch = await pendingRecipients(env.DB, id, 20);
+        if (batch.length === 0) break;
+        await Promise.all(
+          batch.map(async (recipient) => {
+            try {
+              await ctx.api.sendMessage(recipient, draft, HTML);
+              await markNotified(env.DB, recipient, id, 'sent');
+              sent++;
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              if (/can't parse entities|message is too long|message text is empty/i.test(message)) {
+                fatal = message;
+              } else {
+                // Blocked the bot, deactivated, or chat gone: skip them from now on.
+                await markNotified(env.DB, recipient, id, 'blocked').catch(() => undefined);
+                blocked++;
+              }
+            }
+          }),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 900));
+      }
+      const left = (await userCounts(env.DB, id).catch(() => undefined))?.pending ?? 0;
+      const summary = fatal
+        ? `⛔️ ارسال متوقف شد: ${escapeHtml(fatal)}`
+        : `📣 ارسال شد: ${sent} · ناموفق/بلاک: ${blocked}${left > 0 ? ` · باقی‌مانده: ${left} (دوباره «ارسال» را بزن)` : ' · تمام شد ✅'}`;
+      await refresh(ctx, env, cfg, 'broadcast', summary);
+      return true;
+    }
+
     case 'toggleCache': {
       const snapshot = await loadSettings(env, cfg, { fresh: true });
       await saveSetting(env, 'cache_enabled', snapshot.cache.enabled ? 'off' : null);
@@ -372,7 +443,7 @@ export async function handleAdminText(
     case 'ai_key': {
       if (value.length < 8 || /\s/.test(value)) {
         await ctx.reply(
-          '⛔️ این کلید معتبر به نظر نمی‌رسد؛ یک رشتهٔ بدون فاصله (حداقل ۸ کاراکتر) بفرست.\nدوباره /admin را بزن.',
+          '⛔️ این کلید معتبر به نظر نمی‌رسد؛ یک رشتهٔ بدون فاصله (حداقل 8 کاراکتر) بفرست.\nدوباره /admin را بزن.',
           HTML,
         );
         return true;
@@ -419,7 +490,7 @@ export async function handleAdminText(
     case 'daily_limit': {
       const limit = Number.parseInt(value, 10);
       if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
-        await ctx.reply('⛔️ یک عدد بین ۱ تا ۱۰۰۰ بفرست.', HTML);
+        await ctx.reply('⛔️ یک عدد بین 1 تا 1000 بفرست.', HTML);
         return true;
       }
       await saveSetting(env, 'daily_limit', String(limit));
@@ -445,6 +516,16 @@ export async function handleAdminText(
       return true;
     }
 
+    case 'broadcast_text': {
+      if (value.length < 2 || value.length > 3500) {
+        await ctx.reply('⛔️ متن باید بین ۲ تا ۳۵۰۰ کاراکتر باشد.', HTML);
+        return true;
+      }
+      await saveSettings(env, { broadcast_draft: value, broadcast_id: String(Date.now()) });
+      await refresh(ctx, env, cfg, 'broadcast', '✅ پیش‌نویس ذخیره شد. اول «فقط برای من» را امتحان کن.');
+      return true;
+    }
+
     case 'admin_add': {
       const id = Number.parseInt(value, 10);
       if (!/^\d{5,15}$/.test(value) || !Number.isSafeInteger(id)) {
@@ -461,7 +542,7 @@ export async function handleAdminText(
     case 'cache_lyrics_days': {
       const days = Number.parseInt(value, 10);
       if (!/^\d+$/.test(value) || days > 365) {
-        await ctx.reply('⛔️ یک عدد بین ۱ تا ۳۶۵ بفرست (۰ = بی‌نهایت).', HTML);
+        await ctx.reply('⛔️ یک عدد بین 1 تا 365 بفرست (0 = بی‌نهایت).', HTML);
         return true;
       }
       await saveSetting(env, field, days > 0 ? String(days) : null);

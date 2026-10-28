@@ -5,7 +5,7 @@
 import { InlineKeyboard } from 'grammy';
 import { candidatesHeader } from './messages.js';
 import type { Translation } from './prompt.js';
-import { clock, faDigits, stripParentheses, truncate } from './text.js';
+import { clock, faDigits, latinDigits, stripParentheses, truncate } from './text.js';
 import type { TrackSummary } from './types.js';
 
 export const TELEGRAM_LIMIT = 4096;
@@ -13,7 +13,7 @@ export const SAFE_LIMIT = 3800;
 const QUOTE_UPTO_LINES = 40;
 
 export function escapeHtml(input: string): string {
-  return input.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return latinDigits(input).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 const RULE = '┄┄┄┄┄┄┄┄┄┄┄┄';
@@ -25,16 +25,28 @@ const SOURCE_LABELS: Record<TrackSummary['source'], string> = {
   user: 'متن ارسالی خودت',
 };
 
-function trackHeader(track: TrackSummary, link?: string): string[] {
-  const title = `<b>${escapeHtml(track.trackName)}</b>`;
-  const meta = [
-    track.albumName ? `💿 ${escapeHtml(track.albumName)}` : '',
-    track.duration ? `⏱ ${faDigits(clock(track.duration))}` : '',
-  ].filter(Boolean);
+export interface TrackMeta {
+  title?: string;
+  artist?: string;
+  album?: string;
+  /** Release date, YYYY-MM-DD. */
+  date?: string;
+  /** Spotify / Deezer page for the title. */
+  link?: string;
+}
+
+/** The "identity card" block: English labels, Latin digits, title as a link when known. */
+export function identityLines(track: TrackSummary, meta: TrackMeta = {}): string[] {
+  const title = escapeHtml(meta.title ?? track.trackName);
+  const linkedTitle = meta.link
+    ? `<a href="${escapeHtml(meta.link).replace(/"/g, '&quot;')}">${title}</a>`
+    : title;
+  const album = meta.album ?? track.albumName;
   return [
-    `🎵 ${link ? `<a href="${escapeHtml(link).replace(/"/g, '&quot;')}">${title}</a>` : title}`,
-    `🎤 ${escapeHtml(track.artistName)}`,
-    ...(meta.length > 0 ? [meta.join('  ·  ')] : []),
+    `🎧 <b>Track:</b> ${linkedTitle}`,
+    `👤 <b>Artist:</b> ${escapeHtml(meta.artist ?? track.artistName)}`,
+    ...(album ? [`💽 <b>Album:</b> ${escapeHtml(album)}`] : []),
+    ...(meta.date ? [`📅 <b>Date:</b> ${escapeHtml(meta.date)}`] : []),
   ];
 }
 
@@ -44,19 +56,99 @@ function sourceFooter(track: TrackSummary): string {
     : `📚 <i>منبع متن: ${SOURCE_LABELS[track.source]}</i>`;
 }
 
-export function renderLyricsMessage(track: TrackSummary, link?: string): string {
-  const body = escapeHtml(track.lyrics?.trim() ?? '');
-  return [...trackHeader(track, link), RULE, '', body, '', RULE, sourceFooter(track)].join('\n');
+export interface Doc {
+  head: string;
+  blocks: string[];
+  foot: string;
 }
 
-export function renderTranslationMessage(
+/** Splits text that carries no markup (escaped lyrics) at line boundaries. */
+function splitPlain(text: string, budget: number): string[] {
+  if (text.length <= budget) return [text];
+  const out: string[] = [];
+  let current = '';
+  for (const line of text.split('\n')) {
+    const candidate = current ? `${current}\n${line}` : line;
+    if (candidate.length <= budget) {
+      current = candidate;
+      continue;
+    }
+    if (current) out.push(current);
+    let rest = line;
+    while (rest.length > budget) {
+      const cut = lastBreak(rest, budget);
+      out.push(rest.slice(0, cut).trim());
+      rest = rest.slice(cut).trimStart();
+    }
+    current = rest;
+  }
+  if (current) out.push(current);
+  return out;
+}
+
+/**
+ * Builds Telegram-sized messages from whole blocks. A block is never cut in
+ * the middle, so quotes and bold/italic runs always stay balanced; only a
+ * plain-text block that is too long on its own is split (and `plainBlocks`
+ * says which blocks are plain).
+ */
+export function paginate(doc: Doc, options: { plainBlocks?: boolean; limit?: number } = {}): string[] {
+  const limit = options.limit ?? SAFE_LIMIT;
+  const partHead = (index: number, total: number) => `📄 <b>بخش ${index} از ${total}</b>\n${RULE}\n`;
+  const reserve = Math.max(doc.head.length, 60) + doc.foot.length + 40;
+  const budget = Math.max(400, limit - reserve);
+
+  const blocks = options.plainBlocks ? doc.blocks.flatMap((block) => splitPlain(block, budget)) : doc.blocks;
+  const groups: string[][] = [];
+  let current: string[] = [];
+  let size = 0;
+  for (const block of blocks) {
+    const extra = block.length + 2;
+    if (current.length > 0 && size + extra > budget) {
+      groups.push(current);
+      current = [];
+      size = 0;
+    }
+    current.push(block);
+    size += extra;
+  }
+  if (current.length > 0) groups.push(current);
+  if (groups.length === 0) groups.push([]);
+
+  return groups.map((group, index) => {
+    const first = index === 0;
+    const last = index === groups.length - 1;
+    const top = first ? doc.head : groups.length > 1 ? partHead(index + 1, groups.length) : '';
+    const body = group.join('\n\n');
+    return [top ? top.trimEnd() : '', body, last && doc.foot ? `${RULE}\n${doc.foot}` : '']
+      .filter(Boolean)
+      .join(first ? '\n\n' : '\n\n')
+      .trim();
+  });
+}
+
+export function lyricsDoc(track: TrackSummary, meta: TrackMeta = {}): Doc {
+  const body = escapeHtml(track.lyrics?.trim() ?? '');
+  return {
+    head: [...identityLines(track, meta), RULE].join('\n'),
+    blocks: body.split(/\n{2,}/).map((paragraph) => paragraph.trim()).filter(Boolean),
+    foot: sourceFooter(track),
+  };
+}
+
+export function renderLyricsMessage(track: TrackSummary, meta: TrackMeta = {}): string {
+  const doc = lyricsDoc(track, meta);
+  return [doc.head, doc.blocks.join('\n\n'), `${RULE}\n${doc.foot}`].join('\n\n');
+}
+
+export function translationDoc(
   track: TrackSummary,
   translation: Translation,
   languageName: string,
-  link?: string,
+  meta: TrackMeta = {},
   themeLabel = 'مفهوم کلی',
   moodLabel = 'حال‌و‌هوا',
-): string {
+): Doc {
   const quote = translation.lines.length <= QUOTE_UPTO_LINES;
   const blocks = translation.lines.map((line) => {
     const source = quote
@@ -65,13 +157,23 @@ export function renderTranslationMessage(
     const note = line.note ? ` <i>(${escapeHtml(stripParentheses(line.note))})</i>` : '';
     return `${source}\n${escapeHtml(line.text)}${note}`;
   });
-
-  const head = [`🇮🇷 <b>ترجمهٔ ${escapeHtml(languageName)}</b>`, ...trackHeader(track, link), RULE];
+  const head = [`🇮🇷 <b>ترجمهٔ ${escapeHtml(languageName)}</b>`, ...identityLines(track, meta), RULE];
   if (translation.theme) head.push(`🧠 <b>${themeLabel}:</b> ${escapeHtml(translation.theme)}`);
   if (translation.mood) head.push(`💫 <b>${moodLabel}:</b> ${escapeHtml(translation.mood)}`);
   if (translation.theme || translation.mood) head.push(RULE);
+  return { head: head.join('\n'), blocks, foot: sourceFooter(track) };
+}
 
-  return `${head.join('\n')}\n\n${blocks.join('\n\n')}\n\n${RULE}\n${sourceFooter(track)}`;
+export function renderTranslationMessage(
+  track: TrackSummary,
+  translation: Translation,
+  languageName: string,
+  meta: TrackMeta = {},
+  themeLabel = 'مفهوم کلی',
+  moodLabel = 'حال‌و‌هوا',
+): string {
+  const doc = translationDoc(track, translation, languageName, meta, themeLabel, moodLabel);
+  return `${doc.head}\n\n${doc.blocks.join('\n\n')}\n\n${RULE}\n${doc.foot}`;
 }
 
 function lastBreak(text: string, limit: number): number {
@@ -183,15 +285,20 @@ export function lyricsKeyboard(
 }
 
 export interface CallbackData {
-  action: 's' | 't' | 'p' | 'c' | 'b' | 'w' | 'r';
+  action: 's' | 't' | 'p' | 'c' | 'b' | 'w' | 'r' | 'y';
   sessionId: string;
   index: number;
 }
 
 export function parseCallbackData(data: string): CallbackData | null {
-  const match = /^([stpcbwr]):([a-z0-9]{4,16}):(\d{1,4})$/.exec(data);
+  const match = /^([stpcbwry]):([a-z0-9]{4,16}):(\d{1,4})$/.exec(data);
   if (!match) return null;
   const action = match[1] as CallbackData['action'];
   return { action, sessionId: match[2] ?? '', index: Number.parseInt(match[3] ?? '0', 10) };
 }
 
+
+/** One glass button that repeats a failed action (same callback as the original). */
+export function retryKeyboard(action: CallbackData['action'], sessionId: string): InlineKeyboard {
+  return new InlineKeyboard().text('🔄 تلاش دوباره', `${action}:${sessionId}:0`);
+}

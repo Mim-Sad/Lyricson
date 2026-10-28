@@ -24,7 +24,9 @@ export type SettingKey =
   | 'maintenance'
   | 'webhook_state'
   | 'spotify_client_id'
-  | 'spotify_client_secret';
+  | 'spotify_client_secret'
+  | 'broadcast_draft'
+  | 'broadcast_id';
 
 export const SETTING_KEYS: readonly SettingKey[] = [
   'ai_provider',
@@ -42,6 +44,8 @@ export const SETTING_KEYS: readonly SettingKey[] = [
   'webhook_state',
   'spotify_client_id',
   'spotify_client_secret',
+  'broadcast_draft',
+  'broadcast_id',
 ];
 
 /** 0 = never expires. */
@@ -62,6 +66,8 @@ export interface SettingsSnapshot {
   storedAdminIds: number[];
   cache: { enabled: boolean; translationDays: number; lyricsDays: number };
   spotify?: { id: string; secret: string };
+  /** Announcement waiting to be sent (HTML) and its id. */
+  broadcast: { draft: string; id: string };
   /** While true, everyone except admins gets a "back soon" message. */
   maintenance: boolean;
   /** Keys currently overridden by the admin panel rather than env. */
@@ -146,6 +152,7 @@ export function mergeSettings(
     storedAdminIds,
     cache,
     maintenance: clean(stored.maintenance) === 'on',
+    broadcast: { draft: stored.broadcast_draft ?? '', id: clean(stored.broadcast_id) ?? '' },
     ...(spotifyId && spotifySecret ? { spotify: { id: spotifyId, secret: spotifySecret } } : {}),
     fromDb,
     ...(updatedAt ? { updatedAt } : {}),

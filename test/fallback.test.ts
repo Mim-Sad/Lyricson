@@ -27,7 +27,7 @@ describe('lyrics.ovh fallback', () => {
         return url.includes('Nope') ? new Response('{}', { status: 404 }) : Response.json({ lyrics: body });
       }),
     );
-    const found = await searchFallback([{ q: 'Truce twenty one pilots' }]);
+    const { tracks: found } = await searchFallback([{ q: 'Truce twenty one pilots' }]);
     expect(found).toHaveLength(1);
     expect(found[0]).toMatchObject({ trackName: 'Truce', artistName: 'twenty one pilots', source: 'lyrics.ovh' });
     expect(found[0]?.lyrics).toBe(body);
@@ -35,6 +35,8 @@ describe('lyrics.ovh fallback', () => {
 
   it('returns nothing when the service is down', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 503 })));
-    expect(await searchFallback([{ q: 'anything' }])).toEqual([]);
+    const result = await searchFallback([{ q: 'anything' }]);
+    expect(result.tracks).toEqual([]);
+    expect(result.reachable).toBe(false);
   });
 });

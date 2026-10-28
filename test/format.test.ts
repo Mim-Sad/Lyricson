@@ -51,11 +51,12 @@ describe('escapeHtml', () => {
 });
 
 describe('header', () => {
-  it('shows title, artist and album without hashtags, linking the title when a link is known', () => {
-    const text = renderLyricsMessage(TRACK, 'https://open.spotify.com/track/abc');
-    expect(text).toContain('<a href="https://open.spotify.com/track/abc"><b>Yellow</b></a>');
-    expect(text).toContain('🎤 Coldplay');
-    expect(text).toContain('💿 Parachutes');
+  it('renders the English identity block and links the title when a link is known', () => {
+    const text = renderLyricsMessage(TRACK, { link: 'https://open.spotify.com/track/abc', date: '2000-07-10' });
+    expect(text).toContain('🎧 <b>Track:</b> <a href="https://open.spotify.com/track/abc">Yellow</a>');
+    expect(text).toContain('👤 <b>Artist:</b> Coldplay');
+    expect(text).toContain('💽 <b>Album:</b> Parachutes');
+    expect(text).toContain('📅 <b>Date:</b> 2000-07-10');
     expect(text).not.toContain('#');
     expect(renderLyricsMessage(TRACK)).not.toContain('<a href');
   });
@@ -69,11 +70,10 @@ describe('header', () => {
 describe('renderLyricsMessage', () => {
   it('shows the original text with its source', () => {
     const text = renderLyricsMessage(TRACK);
-    expect(text).toContain('<b>Yellow</b>');
+    expect(text).toContain('<b>Track:</b> Yellow');
     expect(text).toContain('Coldplay');
     expect(text).toContain('LRCLIB');
     expect(text).toContain('Look at the stars');
-    expect(text).toContain('۴:۲۷');
   });
 
   it('marks user supplied lyrics', () => {
@@ -113,7 +113,7 @@ describe('splitMessage', () => {
     const chunks = splitMessage(long, 1000);
     expect(chunks.length).toBeGreaterThan(1);
     for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(1000);
-    expect(chunks[0]).toMatch(/بخش ۱ از /);
+    expect(chunks[0]).toMatch(/بخش 1 از /);
   });
 });
 
@@ -158,7 +158,7 @@ describe('inline keyboards', () => {
       1,
     );
     expect(text).toContain('coldplay');
-    expect(text).toContain('صفحهٔ ۱ از ۲');
+    expect(text).toContain('صفحهٔ 1 از 2');
   });
 });
 

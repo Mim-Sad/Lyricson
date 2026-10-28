@@ -29,7 +29,8 @@ export type AdminScreen =
   | 'webhook'
   | 'admins'
   | 'cache'
-  | 'spotify';
+  | 'spotify'
+  | 'broadcast';
 
 export type AdminInputField =
   | 'ai_key'
@@ -39,6 +40,7 @@ export type AdminInputField =
   | 'public_url'
   | 'admin_add'
   | 'spotify_id'
+  | 'broadcast_text'
   | 'spotify_secret'
   | 'cache_translation_days'
   | 'cache_lyrics_days';
@@ -56,6 +58,9 @@ export type AdminAction =
   | { kind: 'clearCache' }
   | { kind: 'pruneCache' }
   | { kind: 'toggleCache' }
+  | { kind: 'broadcastSend' }
+  | { kind: 'broadcastTest' }
+  | { kind: 'broadcastClear' }
   | { kind: 'toggleMaintenance' }
   | { kind: 'removeAdmin'; id: number }
   | { kind: 'webhookRun' };
@@ -76,6 +81,8 @@ export const SETTING_LABELS: Record<SettingKey, string> = {
   webhook_state: 'وضعیت وبهوک',
   spotify_client_id: 'Spotify Client ID',
   spotify_client_secret: 'Spotify Client Secret',
+  broadcast_draft: 'پیش‌نویس اطلاع‌رسانی',
+  broadcast_id: 'شناسهٔ اطلاع‌رسانی',
 };
 
 /** Settings the reset screen may clear (admins, maintenance and webhook state have their own controls). */
@@ -105,6 +112,7 @@ const SCREEN_CALLBACKS: Record<string, AdminScreen> = {
   admins: 'admins',
   cache: 'cache',
   spotify: 'spotify',
+  broadcast: 'broadcast',
 };
 
 const INPUT_CALLBACKS: Record<string, AdminInputField> = {
@@ -115,6 +123,7 @@ const INPUT_CALLBACKS: Record<string, AdminInputField> = {
   hookurl: 'public_url',
   addadmin: 'admin_add',
   spid: 'spotify_id',
+  bctext: 'broadcast_text',
   spsec: 'spotify_secret',
   ctdays: 'cache_translation_days',
   cldays: 'cache_lyrics_days',
@@ -147,6 +156,12 @@ export function parseAdminCallback(data: string): AdminAction | null {
       return { kind: 'pruneCache' };
     case 'tc':
       return { kind: 'toggleCache' };
+    case 'bcsend':
+      return { kind: 'broadcastSend' };
+    case 'bctest':
+      return { kind: 'broadcastTest' };
+    case 'bcclear':
+      return { kind: 'broadcastClear' };
     case 'tm':
       return { kind: 'toggleMaintenance' };
     case 'rm': {
@@ -223,7 +238,9 @@ function homePanel(snapshot: SettingsSnapshot, cfg: Config): AdminPanel {
     .text('💾 کش', 'a:cache')
     .text('👮 ادمین‌ها', 'a:admins')
     .row()
+    .text('📣 اطلاع‌رسانی', 'a:broadcast')
     .text('🎧 اسپاتیفای', 'a:spotify')
+    .row()
     .text('🔗 وبهوک', 'a:webhook')
     .row()
     .text(snapshot.maintenance ? '▶️ پایان حالت تعمیر' : '⏸ حالت تعمیر', 'a:tm')
@@ -373,9 +390,9 @@ function adminsPanel(snapshot: SettingsSnapshot, cfg: Config): AdminPanel {
     all.length > 0 ? all.join('\n') : '⛔️ هنوز ادمینی ثبت نشده.',
     '',
     '<b>راه‌های اضافه‌کردن آیدی عددی:</b>',
-    '۱) همین‌جا «افزودن ادمین» و فرستادن آیدی عددی (آیدی را کاربر با /id در ربات می‌بیند یا از @userinfobot می‌گیرد).',
-    '۲) خودِ شخص در چت خصوصی بنویسد <code>/claim &lt;توکن ربات&gt;</code>.',
-    '۳) متغیر <code>ADMIN_USER_ID</code> (چند آیدی با کاما).',
+    '1) همین‌جا «افزودن ادمین» و فرستادن آیدی عددی (آیدی را کاربر با /id در ربات می‌بیند یا از @userinfobot می‌گیرد).',
+    '2) خودِ شخص در چت خصوصی بنویسد <code>/claim &lt;توکن ربات&gt;</code>.',
+    '3) متغیر <code>ADMIN_USER_ID</code> (چند آیدی با کاما).',
     '',
     '<i>برای دکمهٔ 🗑 روی آیدی بزن تا ادمین حذف شود.</i>',
   ].join('\n');
@@ -385,6 +402,37 @@ function adminsPanel(snapshot: SettingsSnapshot, cfg: Config): AdminPanel {
 /** 0 days means the entry never expires. */
 function days(value: number): string {
   return value > 0 ? `${faDigits(value)} روز` : 'بی‌نهایت';
+}
+
+export interface PanelExtras {
+  users?: { total: number; reachable: number; pending: number };
+}
+
+function broadcastPanel(snapshot: SettingsSnapshot, extras: PanelExtras): AdminPanel {
+  const hasDraft = snapshot.broadcast.draft.length > 0;
+  const users = extras.users;
+  const keyboard = new InlineKeyboard().text(hasDraft ? '✍️ ویرایش پیام' : '✍️ نوشتن پیام', 'a:bctext').row();
+  if (hasDraft) {
+    keyboard
+      .text('🧪 فقط برای من', 'a:bctest')
+      .text(`📣 ارسال (${users?.pending ?? 0})`, 'a:bcsend')
+      .row()
+      .text('🗑 حذف پیش‌نویس', 'a:bcclear')
+      .row();
+  }
+  keyboard.text('⬅️ پنل', 'a:home');
+  const text = [
+    '📣 <b>اطلاع‌رسانی به کاربران</b>',
+    '',
+    `• کاربران ثبت‌شده: ${users?.total ?? 0} (قابل‌دسترس: ${users?.reachable ?? 0})`,
+    ...(hasDraft ? [`• در انتظار ارسال: ${users?.pending ?? 0}`] : []),
+    '',
+    hasDraft ? '<b>پیش‌نویس:</b>' : 'پیامی بنویس تا برای همهٔ کاربرانی که ربات را استارت کرده‌اند فرستاده شود.',
+    ...(hasDraft ? [snapshot.broadcast.draft] : []),
+    '',
+    '<i>می‌توانی از قالب‌بندی HTML تلگرام استفاده کنی (&lt;b&gt;، &lt;i&gt;، &lt;a href&gt;). اول «فقط برای من» را بزن. اگر کاربران زیاد باشند، ارسال در چند نوبت انجام می‌شود؛ دکمهٔ ارسال را دوباره بزن تا ادامه پیدا کند. کاربرانی که ربات را بلاک کرده‌اند خودکار کنار گذاشته می‌شوند.</i>',
+  ].join('\n');
+  return { text, keyboard };
 }
 
 function spotifyPanel(snapshot: SettingsSnapshot): AdminPanel {
@@ -423,7 +471,7 @@ function cachePanel(snapshot: SettingsSnapshot): AdminPanel {
     `• ترجمه‌ها: ${days(snapshot.cache.translationDays)}${sourceTag(snapshot, 'cache_translation_days')}`,
     `• متن آهنگ‌ها: ${days(snapshot.cache.lyricsDays)}${sourceTag(snapshot, 'cache_lyrics_days')}`,
     '',
-    'نتیجهٔ جست‌وجو، متن آهنگ و ترجمه‌های تمام‌شده در دیتابیس D1 ذخیره می‌شوند؛ تپ دوباره روی دکمهٔ ترجمه بدون هزینهٔ AI و بدون مصرف سهمیه جواب می‌دهد. کلید ترجمه شامل مدل، زبان و خودِ متن است، پس با عوض‌کردن مدل ترجمهٔ تازه ساخته می‌شود. پیش‌فرض بی‌نهایت است: چیزی خودکار پاک نمی‌شود. اگر عدد روز بدهی (یا ۰ برای بی‌نهایت)، ردیف‌های منقضی هر ۱۰ دقیقه پاک می‌شوند.',
+    'نتیجهٔ جست‌وجو، متن آهنگ و ترجمه‌های تمام‌شده در دیتابیس D1 ذخیره می‌شوند؛ تپ دوباره روی دکمهٔ ترجمه بدون هزینهٔ AI و بدون مصرف سهمیه جواب می‌دهد. کلید ترجمه شامل مدل، زبان و خودِ متن است، پس با عوض‌کردن مدل ترجمهٔ تازه ساخته می‌شود. پیش‌فرض بی‌نهایت است: چیزی خودکار پاک نمی‌شود. اگر عدد روز بدهی (یا 0 برای بی‌نهایت)، ردیف‌های منقضی هر 10 دقیقه پاک می‌شوند.',
   ].join('\n');
   return { text, keyboard };
 }
@@ -432,6 +480,7 @@ export function renderScreen(
   screen: AdminScreen,
   snapshot: SettingsSnapshot,
   cfg: Config,
+  extras: PanelExtras = {},
 ): AdminPanel {
   switch (screen) {
     case 'ai':
@@ -452,6 +501,8 @@ export function renderScreen(
       return cachePanel(snapshot);
     case 'spotify':
       return spotifyPanel(snapshot);
+    case 'broadcast':
+      return broadcastPanel(snapshot, extras);
     case 'home':
     default:
       return homePanel(snapshot, cfg);
@@ -465,10 +516,11 @@ export const INPUT_PROMPTS: Record<AdminInputField, string> = {
     '🌐 آدرس سرویس سازگار با OpenAI را بفرست؛ مثلاً:\n<code>https://openrouter.ai/api/v1</code>',
   ai_model:
     '🧠 شناسهٔ دقیق مدل را بفرست؛ مثلاً:\n<code>google/gemini-3.8-flash</code>',
-  daily_limit: '🔢 سهمیهٔ روزانهٔ هر کاربر را به عدد بفرست (بین ۱ تا ۱۰۰۰).',
+  daily_limit: '🔢 سهمیهٔ روزانهٔ هر کاربر را به عدد بفرست (بین 1 تا 1000).',
   admin_add: '👮 آیدی عددی تلگرام شخص را بفرست (فقط رقم؛ مثلاً <code>123456789</code>).',
-  cache_translation_days: '⏳ ماندگاری کش ترجمه را به روز بفرست (۱ تا ۳۶۵)، یا ۰ برای بی‌نهایت.',
-  cache_lyrics_days: '⏳ ماندگاری کش متن آهنگ را به روز بفرست (۱ تا ۳۶۵)، یا ۰ برای بی‌نهایت.',
+  cache_translation_days: '⏳ ماندگاری کش ترجمه را به روز بفرست (1 تا 365)، یا 0 برای بی‌نهایت.',
+  cache_lyrics_days: '⏳ ماندگاری کش متن آهنگ را به روز بفرست (1 تا 365)، یا 0 برای بی‌نهایت.',
+  broadcast_text: '✍️ متن پیام را بفرست (HTML تلگرام مجاز است).',
   spotify_id: '🆔 Spotify Client ID را بفرست.',
   spotify_secret: '🔑 Spotify Client Secret را بفرست؛ بعد از ذخیره پیامت پاک می‌شود.',
   public_url:

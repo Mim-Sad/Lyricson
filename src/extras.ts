@@ -5,9 +5,9 @@
 import { InlineKeyboard, InputFile, type Context } from 'grammy';
 import type { Config, Env } from './env.js';
 import { describeAiError } from './lib/ai.js';
-import { artistBioMessage, artistCaption, cardCaption, renderStory, renderWords } from './lib/cards.js';
+import { artistBioDoc, artistCaption, cardCaption, storyDoc, wordsDoc } from './lib/cards.js';
 import { isUserFacing, logError } from './lib/errors.js';
-import { splitMessage } from './lib/format.js';
+import { paginate, retryKeyboard, type Doc, type TrackMeta } from './lib/format.js';
 import {
   buildArtistBio,
   buildStory,
@@ -23,7 +23,7 @@ import {
   type ArtistInfo,
   findMusicInfo,
   freshPreviewUrl,
-  primaryLink,
+  identityOf,
   trackKey,
   withId3Tags,
   type MusicInfo,
@@ -39,34 +39,41 @@ function chatIdOf(ctx: Context): number | null {
   return ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id ?? null;
 }
 
+type Extra = { reply_markup?: InlineKeyboard; replyTo?: number };
+
+function replyParams(replyTo?: number): { reply_parameters?: { message_id: number; allow_sending_without_reply: true } } {
+  return replyTo ? { reply_parameters: { message_id: replyTo, allow_sending_without_reply: true } } : {};
+}
+
 /**
  * Answers by editing the "searching…" message when there is one (so the user
- * saw a reply instantly), otherwise sends a fresh message. Returns the id of
- * the message that now holds `text`.
+ * saw a reply instantly), otherwise sends a fresh message (as a reply to
+ * `replyTo` when given). Returns the id of the message that now holds `text`.
  */
 export async function settle(
   ctx: Context,
   statusId: number | undefined,
   text: string,
-  extra: { reply_markup?: InlineKeyboard } = {},
+  extra: Extra = {},
 ): Promise<number> {
   const chatId = chatIdOf(ctx);
+  const markup = extra.reply_markup ? { reply_markup: extra.reply_markup } : {};
   if (statusId && chatId) {
     try {
-      await ctx.api.editMessageText(chatId, statusId, text, { ...HTML, ...extra });
+      await ctx.api.editMessageText(chatId, statusId, text, { ...HTML, ...markup });
       return statusId;
     } catch (error) {
       if (error instanceof Error && /message is not modified/i.test(error.message)) return statusId;
       logError('settle', error);
     }
   }
-  const sent = await ctx.reply(text, { ...HTML, ...extra });
+  const sent = await ctx.reply(text, { ...HTML, ...markup, ...replyParams(extra.replyTo) });
   return sent.message_id;
 }
 
-export async function sendStatus(ctx: Context, text: string): Promise<number | undefined> {
+export async function sendStatus(ctx: Context, text: string, replyTo?: number): Promise<number | undefined> {
   try {
-    return (await ctx.reply(text, HTML)).message_id;
+    return (await ctx.reply(text, { ...HTML, ...replyParams(replyTo) })).message_id;
   } catch {
     return undefined;
   }
@@ -101,7 +108,7 @@ export function musicInfoFor(
 export async function sendPreviewAudio(ctx: Context, env: Env, info: MusicInfo): Promise<boolean> {
   const chatId = chatIdOf(ctx);
   if (!chatId || !info.preview) return false;
-  const caption = '▶️ <i>پیش‌نمایش ۳۰ ثانیه‌ای</i>';
+  const caption = '▶️ <i>پیش‌نمایش 30 ثانیه‌ای</i>';
   const cacheKey = `a:${info.deezerId}`;
   try {
     const cached = await cacheGet<{ fileId: string }>(env.DB, 'lyric_cache', cacheKey, 0);
@@ -143,34 +150,48 @@ export async function sendPreviewAudio(ctx: Context, env: Env, info: MusicInfo):
 // Music card
 // ---------------------------------------------------------------------------
 
+export function metaOf(track: TrackSummary, info: MusicInfo | null): TrackMeta {
+  const identity = identityOf(track, info);
+  return {
+    title: identity.title,
+    artist: identity.artist,
+    ...(identity.album ? { album: identity.album } : {}),
+    ...(identity.date ? { date: identity.date } : {}),
+    ...(identity.link ? { link: identity.link } : {}),
+  };
+}
+
 export async function onCard(ctx: Context, env: Env, cfg: Config, track: TrackSummary): Promise<void> {
   await ctx.answerCallbackQuery().catch(() => undefined);
   const chatId = chatIdOf(ctx);
   if (!chatId) return;
+  const replyTo = ctx.callbackQuery?.message?.message_id;
   const settings = await loadSettings(env, cfg);
   const info = await withTimeout(musicInfoFor(env, settings, track), 5000);
   const id = await shareIdFor(track);
   await saveShare(env.DB, id, track).catch((error) => logError('share', error));
 
-  const keyboard = new InlineKeyboard();
-  const base = settings.publicUrl;
-  if (base) {
-    keyboard.url('📜 متن اصلی', `${base}/l/${id}`).url('🇮🇷 متن + ترجمه', `${base}/t/${id}`).row();
-  }
-  if (info?.spotifyUrl) keyboard.url('🎧 Spotify', info.spotifyUrl);
-  if (info?.deezerUrl) keyboard.url('🎵 Deezer', info.deezerUrl);
-
-  const caption = cardCaption(track, info);
-  const markup = keyboard.inline_keyboard.length > 0 ? { reply_markup: keyboard } : {};
+  // Links open the result inside the bot (deep link), never an external site.
+  const bot = ctx.me.username;
+  const deep = (kind: 'l' | 't') => `https://t.me/${bot}?start=${kind}_${id}`;
+  const listen = [
+    ...(info?.spotifyUrl ? [{ label: 'Spotify', url: info.spotifyUrl }] : []),
+    ...(info?.deezerUrl ? [{ label: 'Deezer', url: info.deezerUrl }] : []),
+  ];
+  const caption = cardCaption(track, metaOf(track, info), {
+    lyrics: deep('l'),
+    translation: deep('t'),
+    listen,
+  });
   if (info?.cover) {
     try {
-      await ctx.api.sendPhoto(chatId, info.cover, { caption, parse_mode: 'HTML', ...markup });
+      await ctx.api.sendPhoto(chatId, info.cover, { caption, parse_mode: 'HTML', ...replyParams(replyTo) });
       return;
     } catch (error) {
       logError('card.photo', error);
     }
   }
-  await ctx.reply(caption, { ...HTML, ...markup });
+  await ctx.reply(caption, { ...HTML, ...replyParams(replyTo) });
 }
 
 // ---------------------------------------------------------------------------
@@ -185,45 +206,67 @@ const WORKING: Record<InsightKind, string> = {
   artist: M.ARTIST_WORKING,
 };
 
+const KIND_ACTION = { story: 'b', words: 'w', artist: 'r' } as const;
+
+interface InsightContext {
+  ctx: Context;
+  env: Env;
+  cfg: Config;
+  kind: InsightKind;
+  sessionId: string;
+  replyTo: number | undefined;
+  statusId: number | undefined;
+}
+
+/** Shows an error on the status message with a retry button. */
+async function failWithRetry(c: InsightContext, text: string): Promise<void> {
+  await settle(c.ctx, c.statusId, text, {
+    reply_markup: retryKeyboard(KIND_ACTION[c.kind], c.sessionId),
+    ...(c.replyTo ? { replyTo: c.replyTo } : {}),
+  });
+}
+
 /** Cache → quota → AI → cache; the same answer is never paid for twice. */
 async function cachedInsight<T>(
-  ctx: Context,
-  env: Env,
-  cfg: Config,
-  kind: InsightKind,
+  c: InsightContext,
   key: string,
-  statusId: number | undefined,
   build: (ai: SettingsSnapshot['ai']) => Promise<T>,
-): Promise<{ value: T; statusId: number | undefined } | null> {
-  const settings = await loadSettings(env, cfg);
-  const cacheKey = `x:${kind}:${await sha256Hex(key)}`;
-  const cached = await cacheGet<T>(env.DB, 'translation_cache', cacheKey, 0);
-  if (cached) return { value: cached, statusId };
+): Promise<T | null> {
+  const settings = await loadSettings(c.env, c.cfg);
+  const cacheKey = `x:${c.kind}:${await sha256Hex(key)}`;
+  const cached = await cacheGet<T>(c.env.DB, 'translation_cache', cacheKey, 0);
+  if (cached) return cached;
 
   if (!settings.ai.apiKey) {
-    await settle(ctx, statusId, M.AI_NOT_CONFIGURED);
+    await settle(c.ctx, c.statusId, M.AI_NOT_CONFIGURED, { ...(c.replyTo ? { replyTo: c.replyTo } : {}) });
     return null;
   }
-  const quota = await consumeQuota(env.DB, ctx.from?.id ?? 0, settings.dailyLimit);
+  const quota = await consumeQuota(c.env.DB, c.ctx.from?.id ?? 0, settings.dailyLimit);
   if (!quota.allowed) {
-    await settle(ctx, statusId, M.quotaReached(settings.dailyLimit));
+    await settle(c.ctx, c.statusId, M.quotaReached(settings.dailyLimit), { ...(c.replyTo ? { replyTo: c.replyTo } : {}) });
     return null;
   }
   try {
     const value = await build(settings.ai);
-    await cachePut(env.DB, 'translation_cache', cacheKey, value);
-    return { value, statusId };
+    await cachePut(c.env.DB, 'translation_cache', cacheKey, value);
+    return value;
   } catch (error) {
-    logError(`insight.${kind}`, error);
-    await settle(ctx, statusId, isUserFacing(error) ? error.userText : describeAiError(error));
+    logError(`insight.${c.kind}`, error);
+    await failWithRetry(c, isUserFacing(error) ? error.userText : describeAiError(error));
     return null;
   }
 }
 
-async function sendLong(ctx: Context, statusId: number | undefined, text: string): Promise<void> {
-  const chunks = splitMessage(text);
-  for (const [index, chunk] of chunks.entries()) {
-    await settle(ctx, index === 0 ? statusId : undefined, chunk);
+async function sendDoc(
+  c: InsightContext,
+  doc: Doc,
+  options: { reuseStatus: boolean; plainBlocks?: boolean },
+): Promise<void> {
+  const parts = paginate(doc, options.plainBlocks ? { plainBlocks: true } : {});
+  for (const [index, part] of parts.entries()) {
+    await settle(c.ctx, index === 0 && options.reuseStatus ? c.statusId : undefined, part, {
+      ...(c.replyTo ? { replyTo: c.replyTo } : {}),
+    });
   }
 }
 
@@ -232,26 +275,28 @@ export async function onInsight(
   env: Env,
   cfg: Config,
   kind: InsightKind,
+  session: Session,
   track: TrackSummary,
 ): Promise<void> {
-  await ctx.answerCallbackQuery({ text: kind === 'words' ? 'در حال آماده‌سازی ⏳' : 'در حال تحقیق ⏳' }).catch(() => undefined);
+  await ctx.answerCallbackQuery({ text: kind === 'words' ? 'Working…' : 'Researching…' }).catch(() => undefined);
   const chatId = chatIdOf(ctx);
   if (!chatId) return;
-  const statusId = await sendStatus(ctx, WORKING[kind]);
+  // Both the temporary and the final answer reply to the message that holds the buttons.
+  const replyTo = ctx.callbackQuery?.message?.message_id;
+  const statusId = await sendStatus(ctx, WORKING[kind], replyTo);
+  const c: InsightContext = { ctx, env, cfg, kind, sessionId: session.id, replyTo, statusId };
 
   if (kind === 'story') {
-    const result = await cachedInsight<Story>(ctx, env, cfg, 'story', trackKey(track), statusId, (ai) =>
-      buildStory(ai, track, track.lyrics ?? ''),
-    );
-    if (result) await sendLong(ctx, statusId, renderStory(track, result.value));
+    const story = await cachedInsight<Story>(c, trackKey(track), (ai) => buildStory(ai, track, track.lyrics ?? ''));
+    if (story) await sendDoc(c, storyDoc(track, story), { reuseStatus: true });
     return;
   }
 
   if (kind === 'words') {
-    const result = await cachedInsight<VocabWord[]>(ctx, env, cfg, 'words', trackKey(track), statusId, (ai) =>
+    const words = await cachedInsight<VocabWord[]>(c, trackKey(track), (ai) =>
       buildVocabulary(ai, track, track.lyrics ?? ''),
     );
-    if (result) await sendLong(ctx, statusId, renderWords(track, result.value));
+    if (words) await sendDoc(c, wordsDoc(track, words), { reuseStatus: true });
     return;
   }
 
@@ -263,12 +308,9 @@ export async function onInsight(
     logError('artistInfo', error);
     return { name, photos: [], albums: [] };
   });
-  const result = await cachedInsight<ArtistBio>(ctx, env, cfg, 'artist', normalize(name), statusId, (ai) =>
-    buildArtistBio(ai, artist),
-  );
-  if (!result) return;
+  const bio = await cachedInsight<ArtistBio>(c, normalize(name), (ai) => buildArtistBio(ai, artist));
+  if (!bio) return;
 
-  const bio = result.value;
   const caption = artistCaption(artist.name, bio, artist.fans);
   const photos = [...new Set([...artist.photos, ...artist.albums])].slice(0, 4);
   let sentWithPhotos = false;
@@ -281,20 +323,30 @@ export async function onInsight(
           media: url,
           ...(index === 0 ? { caption, parse_mode: 'HTML' as const } : {}),
         })),
+        replyParams(replyTo),
       );
-      sentWithPhotos = true;
-    } else if (photos.length === 1 && photos[0]) {
-      await ctx.api.sendPhoto(chatId, photos[0], { caption, parse_mode: 'HTML' });
       sentWithPhotos = true;
     }
   } catch (error) {
-    logError('artist.photos', error);
+    logError('artist.group', error);
   }
-  if (statusId) await ctx.api.deleteMessage(chatId, statusId).catch(() => undefined);
-  if (!sentWithPhotos) await ctx.reply(caption, HTML);
+  // A single photo (or a group Telegram refused): try the portrait alone before giving up on photos.
+  if (!sentWithPhotos && photos[0]) {
+    try {
+      await ctx.api.sendPhoto(chatId, photos[0], { caption, parse_mode: 'HTML', ...replyParams(replyTo) });
+      sentWithPhotos = true;
+    } catch (error) {
+      logError('artist.photo', error);
+    }
+  }
+  if (sentWithPhotos) {
+    if (statusId) await ctx.api.deleteMessage(chatId, statusId).catch(() => undefined);
+  } else {
+    await settle(ctx, statusId, caption, { ...(replyTo ? { replyTo } : {}) });
+  }
 
-  const rest = artistBioMessage(artist.name, bio);
-  if (rest) await sendLong(ctx, undefined, rest);
+  const rest = artistBioDoc(artist.name, bio);
+  if (rest) await sendDoc(c, rest, { reuseStatus: false, plainBlocks: true });
 }
 
 /** Session payload helper. */

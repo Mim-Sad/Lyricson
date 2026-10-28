@@ -7,6 +7,7 @@ import { Bot, InlineKeyboard, type Context } from 'grammy';
 import type { UserFromGetMe } from 'grammy/types';
 import { handleAdminCallback, handleAdminCommand, handleAdminText } from './admin.js';
 import {
+  metaOf,
   musicInfoFor,
   onCard,
   onInsight,
@@ -17,7 +18,6 @@ import {
   trackOfSession,
   withTimeout,
 } from './extras.js';
-import { primaryLink } from './lib/music.js';
 import type { Config, Env } from './env.js';
 import { describeAiError, translateTrack } from './lib/ai.js';
 import { isAdmin } from './lib/admin-panel.js';
@@ -28,14 +28,15 @@ import {
   candidateKeyboard,
   lyricsKeyboard,
   parseCallbackData,
+  lyricsDoc,
+  paginate,
   renderCandidatesMessage,
-  renderLyricsMessage,
-  renderTranslationMessage,
-  splitMessage,
+  retryKeyboard,
+  translationDoc,
 } from './lib/format.js';
 import { buildFileInput, detectUrl, fetchId3Tags, resolveLink, type AudioMetadata } from './lib/identify.js';
 import { languageFor, TARGET_LANGUAGES } from './lib/languages.js';
-import { getTrackById, getTrackByMetadata, lrclibWasThrottled, searchTracks } from './lib/lyrics.js';
+import { getTrackById, getTrackByMetadata, searchTracks } from './lib/lyrics.js';
 import * as M from './lib/messages.js';
 import { toSourceLines, type Translation } from './lib/prompt.js';
 import {
@@ -47,11 +48,13 @@ import {
   createSession,
   ensureSchema,
   getSession,
+  getShare,
   getTargetLang,
   quotaUsed,
   saveShare,
   setSessionMessageId,
   setTargetLang,
+  touchUser,
 } from './lib/store.js';
 import { buildSearchHints, decideMatch, faDigits, looksLikeLyrics, sha256Hex, sortRanked } from './lib/text.js';
 import { isSearchPayload, type Session, type TrackSummary } from './lib/types.js';
@@ -93,6 +96,7 @@ export function createBot(env: Env, cfg: Config, botInfo?: UserFromGetMe): Bot {
   // Refresh the live settings (admins, cache policy, maintenance) once per update.
   bot.use(async (ctx, next) => {
     const settings = await loadSettings(env, cfg);
+    if (ctx.from && ctx.chat?.type === 'private') await touchUser(env.DB, ctx.from);
     cfg.adminUserIds = settings.adminIds;
     applyCachePolicy({
       enabled: settings.cache.enabled,
@@ -145,6 +149,12 @@ export function createBot(env: Env, cfg: Config, botInfo?: UserFromGetMe): Bot {
   });
 
   bot.command('start', async (ctx) => {
+    // Deep links from the music card: /start l_<id> (lyrics) or t_<id> (lyrics + translation).
+    const shared = /^([lt])_([a-z0-9]{6,16})$/.exec(String(ctx.match ?? '').trim());
+    if (shared) {
+      await openShared(ctx, env, cfg, shared[1] === 't', shared[2] ?? '');
+      return;
+    }
     if (isAdmin(cfg, ctx.from?.id)) {
       await ctx.reply(M.WELCOME, {
         ...HTML,
@@ -243,15 +253,23 @@ export function createBot(env: Env, cfg: Config, botInfo?: UserFromGetMe): Bot {
       await onTranslate(ctx, env, cfg, session);
       return;
     }
+    if (parsed.action === 'y') {
+      // Retry of a search that failed because the lyric sources were unreachable.
+      await ctx.answerCallbackQuery({ text: 'Retrying…' }).catch(() => undefined);
+      const statusId = ctx.callbackQuery.message?.message_id;
+      await settle(ctx, statusId, M.SEARCHING);
+      await handleRequest(ctx, env, cfg, { query: session.query, ...(statusId ? { statusId } : {}) });
+      return;
+    }
     const track = trackOfSession(session);
     if (!track) {
       await ctx.answerCallbackQuery({ text: 'این دکمه منقضی شده؛ دوباره جست‌وجو کن.' });
       return;
     }
     if (parsed.action === 'c') await onCard(ctx, env, cfg, track);
-    else if (parsed.action === 'b') await onInsight(ctx, env, cfg, 'story', track);
-    else if (parsed.action === 'w') await onInsight(ctx, env, cfg, 'words', track);
-    else await onInsight(ctx, env, cfg, 'artist', track);
+    else if (parsed.action === 'b') await onInsight(ctx, env, cfg, 'story', session, track);
+    else if (parsed.action === 'w') await onInsight(ctx, env, cfg, 'words', session, track);
+    else await onInsight(ctx, env, cfg, 'artist', session, track);
   });
 
   return bot;
@@ -412,11 +430,23 @@ async function handleRequest(ctx: BotContext, env: Env, cfg: Config, input: Requ
     }
   }
 
-  const found = await searchTracks(env.DB, hints, SEARCH_RESULT_LIMIT);
+  const { tracks: found, degraded } = await searchTracks(env.DB, hints, SEARCH_RESULT_LIMIT);
   const ranked = sortRanked(hints, found).filter((track) => Boolean(track.lyrics));
   if (ranked.length === 0) {
-    if (found.length === 0 && lrclibWasThrottled()) {
-      await settle(ctx, statusId, M.LYRICS_BUSY);
+    // "Busy" only when the sources were really unreachable; a genuine miss gets the normal tips.
+    if (degraded) {
+      const chatId = chatIdOf(ctx);
+      const retrySession =
+        chatId && displayQuery
+          ? await createSession(env.DB, {
+              chatId,
+              userId: userIdOf(ctx),
+              mode: 'search',
+              query: displayQuery,
+              payload: { candidates: [] },
+            }).catch(() => undefined)
+          : undefined;
+      await settle(ctx, statusId, M.LYRICS_BUSY, retrySession ? { reply_markup: retryKeyboard('y', retrySession) } : {});
       return;
     }
     const anyTrack = found[0];
@@ -479,7 +509,7 @@ async function sendTrack(
     payload: { track, ...(searchSessionId ? { searchSid: searchSessionId } : {}) },
   });
 
-  const chunks = splitMessage(renderLyricsMessage(track, primaryLink(info)));
+  const chunks = paginate(lyricsDoc(track, metaOf(track, info)), { plainBlocks: true });
   let lastMessageId: number | undefined;
   for (const [index, chunk] of chunks.entries()) {
     const isLast = index === chunks.length - 1;
@@ -498,6 +528,26 @@ async function sendTrack(
   // The audio went out as its own message, so the "searching…" placeholder is no longer needed.
   if (audioSent && options.statusId) await ctx.api.deleteMessage(chatId, options.statusId).catch(() => undefined);
   await saveShare(env.DB, await shareIdFor(track), track).catch((error) => logError('share', error));
+}
+
+/** Opens a track from a card deep link: the lyrics, or the stored translation when asked for. */
+async function openShared(ctx: BotContext, env: Env, cfg: Config, wantTranslation: boolean, id: string): Promise<void> {
+  await ensureSchema(env.DB);
+  const share = await getShare(env.DB, id);
+  if (!share) {
+    await ctx.reply(M.SHARE_MISSING, HTML);
+    return;
+  }
+  if (!wantTranslation || !share.translation) {
+    await sendTrack(ctx, env, cfg, share.track, {
+      ...(wantTranslation ? { notice: M.NO_TRANSLATION_YET } : {}),
+    });
+    return;
+  }
+  const settings = await loadSettings(env, cfg);
+  const info = await withTimeout(musicInfoFor(env, settings, share.track), 3000);
+  const doc = translationDoc(share.track, share.translation, languageFor(share.language ?? 'fa').nativeName, metaOf(share.track, info));
+  for (const chunk of paginate(doc)) await ctx.reply(chunk, HTML);
 }
 
 async function showCandidates(
@@ -658,17 +708,20 @@ async function onTranslate(ctx: BotContext, env: Env, cfg: Config, session: Sess
     }
 
     const info = await withTimeout(musicInfoFor(env, settings, track), 2500);
-    const link = primaryLink(info);
     await saveShare(env.DB, await shareIdFor(track), track, { value: translation, language: language.code }).catch(
       (error) => logError('share', error),
     );
-    const body =
-      renderTranslationMessage(track, translation, language.nativeName, link) +
-      (translation.missing > 0 ? M.partialNotice(translation.missing) : '');
-    const chunks = splitMessage(body);
+    const doc = translationDoc(track, translation, language.nativeName, metaOf(track, info));
+    if (translation.missing > 0) doc.foot = `${M.partialNotice(translation.missing).trim()}\n${doc.foot}`;
+    const chunks = paginate(doc);
     await ctx.api.editMessageText(chatId, placeholder.message_id, chunks[0] ?? '', HTML);
     for (const chunk of chunks.slice(1)) {
-      await ctx.reply(chunk, HTML);
+      await ctx.reply(chunk, {
+        ...HTML,
+        ...(session.messageId
+          ? { reply_parameters: { message_id: placeholder.message_id, allow_sending_without_reply: true } }
+          : {}),
+      });
     }
   } catch (error) {
     logError('translate', error, { userId, track: track.trackName });

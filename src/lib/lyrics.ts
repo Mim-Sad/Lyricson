@@ -32,6 +32,8 @@ const LRCLIB_HEADERS = {
 
 /** Set when LRCLIB answered 429 even after retries, so the bot can say "busy" instead of "not found". */
 let throttledAt = 0;
+/** Counts failed LRCLIB requests (429, 5xx, network) so a search can tell "nothing found" from "service down". */
+let lrclibErrors = 0;
 
 export function lrclibWasThrottled(withinMs = 20_000): boolean {
   return Date.now() - throttledAt < withinMs;
@@ -51,6 +53,7 @@ async function lrclibFetch<T>(path: string): Promise<T | null> {
       });
       if (response.status === 404) return null;
       if (response.status === 429 || response.status >= 500) {
+        lrclibErrors++;
         if (response.status === 429) throttledAt = Date.now();
         const retryAfter = Number.parseFloat(response.headers.get('retry-after') ?? '');
         const wait = Number.isFinite(retryAfter) ? Math.min(retryAfter * 1000, 1500) : 350;
@@ -66,6 +69,7 @@ async function lrclibFetch<T>(path: string): Promise<T | null> {
       throttledAt = 0;
       return (await response.json()) as T;
     } catch (error) {
+      lrclibErrors++;
       logError('lrclib', error, { path });
       return null;
     }
@@ -159,9 +163,16 @@ async function searchOnce(db: D1Database, hint: SearchHint): Promise<TrackSummar
   return summaries;
 }
 
-export async function searchTracks(db: D1Database, hints: SearchHint[], limit = 12): Promise<TrackSummary[]> {
+export interface SearchResult {
+  tracks: TrackSummary[];
+  /** True when no source answered usefully (rate limits, outages), as opposed to a real "not found". */
+  degraded: boolean;
+}
+
+export async function searchTracks(db: D1Database, hints: SearchHint[], limit = 12): Promise<SearchResult> {
   const attempts = hints.slice(0, 3);
-  if (attempts.length === 0) return [];
+  if (attempts.length === 0) return { tracks: [], degraded: false };
+  const errorsBefore = lrclibErrors;
   const usable = (list: TrackSummary[]) => list.some((track) => Boolean(track.lyrics));
 
   // LRCLIB, one request at a time: parallel requests are what trips its rate limit.
@@ -180,19 +191,25 @@ export async function searchTracks(db: D1Database, hints: SearchHint[], limit = 
     if (!lrclibWasThrottled(60_000)) await sleep(900);
     return searchFallback(attempts);
   })();
+  let backupReached = false;
 
+  const withReach = backup.then((result) => {
+    backupReached = result.reachable;
+    return result.tracks;
+  });
   const merged = await Promise.race([
-    primary.then((list) => (usable(list) ? list : backup.then((extra) => [...list, ...extra]))),
-    backup.then((list) => (usable(list) ? list : primary.then((first) => [...first, ...list]))),
+    primary.then((list) => (usable(list) ? list : withReach.then((extra) => [...list, ...extra]))),
+    withReach.then((list) => (usable(list) ? list : primary.then((first) => [...first, ...list]))),
   ]);
   // Don't leave the loser running unobserved.
   void primary.catch(() => undefined);
-  void backup.catch(() => undefined);
+  void withReach.catch(() => undefined);
 
   const withLyrics = merged.filter((track) => Boolean(track.lyrics));
   const without = merged.filter((track) => !track.lyrics);
   // The same song exists many times; keep one entry per track+artist, preferring the copy with lyrics.
-  return dedupeTracks([...withLyrics, ...without]).slice(0, limit);
+  const tracks = dedupeTracks([...withLyrics, ...without]).slice(0, limit);
+  return { tracks, degraded: tracks.length === 0 && lrclibErrors > errorsBefore && !backupReached };
 }
 
 /** Collapses uploads of the same song into a single candidate. */
