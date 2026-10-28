@@ -1,0 +1,28 @@
+{
+  "name": "lyricson",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Lyricson — a fast, user-friendly Telegram bot that finds song lyrics from a name, link, audio file or video and translates them line by line with an AI that explains hidden meaning.",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "build": "wrangler deploy --dry-run --outdir=dist",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:create": "wrangler d1 create lyricson",
+    "db:migrate:local": "wrangler d1 execute lyricson --local --file=./migrations/0001_init.sql",
+    "db:migrate:remote": "wrangler d1 execute lyricson --remote --file=./migrations/0001_init.sql"
+  },
+  "dependencies": {
+    "grammy": "^1.46.0",
+    "hono": "^4.13.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261027.1",
+    "typescript": "^5.9.0",
+    "vitest": "^5.0.5",
+    "wrangler": "^4.154.0"
+  }
+}

@@ -1,0 +1,33 @@
+# Copy to .dev.vars for local `npm run dev`. Never commit the real file.
+# On Cloudflare use `wrangler secret put NAME` (or Sites -> Secrets) instead.
+
+# From @BotFather
+TELEGRAM_BOT_TOKEN=123456789:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# Any random string. It is sent to Telegram as webhook secret_token and checked
+# on every incoming update. /admin/setup can generate and register it for you.
+TELEGRAM_WEBHOOK_SECRET=change-me-to-a-random-string
+
+# AI provider: openrouter | freebuff | custom
+AI_PROVIDER=openrouter
+# OpenRouter key: https://openrouter.ai/keys
+# Every env value here can also be changed at runtime from the in-bot /admin panel.
+AI_API_KEY=
+AI_BASE_URL=https://openrouter.ai/api/v1
+AI_MODEL=google/gemini-3.8-flash
+
+# Your numeric Telegram user id (from @userinfobot). Only this id can use /admin.
+# Several ids are allowed: 123456, 789012
+ADMIN_USER_ID=
+
+# Public origin of the Worker, used by /admin and /admin/setup to register the webhook.
+# PUBLIC_URL=https://lyricson.example.workers.dev
+
+# Protects /admin/setup. Keep it long and random.
+ADMIN_SECRET=change-me-too
+
+# Optional overrides
+DEFAULT_TARGET_LANG=fa
+DAILY_TRANSLATION_LIMIT=40
+# Development only: point grammY at a mock Telegram API server.
+# TELEGRAM_API_ROOT=http://127.0.0.1:8790

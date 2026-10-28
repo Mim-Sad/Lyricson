@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "lyricson",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "DEFAULT_TARGET_LANG": "fa",
+    "DAILY_TRANSLATION_LIMIT": "40",
+    "AI_PROVIDER": "openrouter",
+    "AI_BASE_URL": "https://openrouter.ai/api/v1",
+    "AI_MODEL": "google/gemini-3.8-flash"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "lyricson",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ]
+}
