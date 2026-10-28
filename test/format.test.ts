@@ -8,7 +8,9 @@ import {
   renderCandidatesMessage,
   renderLyricsMessage,
   renderTranslationMessage,
+  paginate,
   splitMessage,
+  translationDoc,
 } from '../src/lib/format.js';
 import type { Translation } from '../src/lib/prompt.js';
 import type { TrackSummary } from '../src/lib/types.js';
@@ -91,15 +93,21 @@ describe('renderTranslationMessage', () => {
     expect(text).toContain('حال‌و‌هوا');
   });
 
-  it('falls back to italic source lines for long songs', () => {
-    const lines = Array.from({ length: 45 }, (_, index) => ({
+  it('keeps every source line in a quote, even for long songs, and stays under the entity limit', () => {
+    const lines = Array.from({ length: 120 }, (_, index) => ({
       i: index + 1,
       source: `line ${index + 1}`,
       text: `خط ${index + 1}`,
+      note: 'نکته',
     }));
-    const text = renderTranslationMessage(TRACK, { ...TRANSLATION, lines }, 'فارسی');
-    expect(text).not.toContain('<blockquote>');
-    expect(text).toContain('<i>line 1</i>');
+    const doc = translationDoc(TRACK, { ...TRANSLATION, lines }, 'فارسی');
+    const parts = paginate(doc);
+    expect(parts.length).toBeGreaterThan(1);
+    for (const part of parts) {
+      expect((part.match(/<(?!\/)[a-z]/gi) ?? []).length).toBeLessThanOrEqual(100);
+      expect(part).not.toContain('<i>line');
+    }
+    expect(parts.join('')).toContain('<blockquote>line 120</blockquote>');
   });
 });
 
