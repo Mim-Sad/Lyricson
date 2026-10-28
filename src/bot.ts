@@ -22,7 +22,7 @@ import {
 } from './lib/format.js';
 import { buildFileInput, detectUrl, fetchId3Tags, resolveLink, type AudioMetadata } from './lib/identify.js';
 import { languageFor, TARGET_LANGUAGES } from './lib/languages.js';
-import { getTrackById, getTrackByMetadata, searchTracks } from './lib/lyrics.js';
+import { getTrackById, getTrackByMetadata, lrclibWasThrottled, searchTracks } from './lib/lyrics.js';
 import * as M from './lib/messages.js';
 import { toSourceLines, type Translation } from './lib/prompt.js';
 import {
@@ -383,6 +383,10 @@ async function handleRequest(ctx: BotContext, env: Env, cfg: Config, input: Requ
   const found = await searchTracks(env.DB, hints, SEARCH_RESULT_LIMIT);
   const ranked = sortRanked(hints, found).filter((track) => Boolean(track.lyrics));
   if (ranked.length === 0) {
+    if (found.length === 0 && lrclibWasThrottled()) {
+      await ctx.reply(M.LYRICS_BUSY, HTML);
+      return;
+    }
     const anyTrack = found[0];
     await ctx.reply(anyTrack ? M.noLyricsFound(anyTrack) : M.notFound(displayQuery || '—'), HTML);
     return;

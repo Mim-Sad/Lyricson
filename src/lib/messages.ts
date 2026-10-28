@@ -140,3 +140,5 @@ export function escapeForMessage(text: string): string {
 export function partialNotice(missing: number): string {
   return `\n\n<i>⚠️ ${missing} خط ترجمه نشد؛ همون خط‌ها به زبان اصلی مونده.</i>`;
 }
+
+export const LYRICS_BUSY = '⏳ سرویس متن موزیک (LRCLIB) الان شلوغ است و جواب نداد؛ چند ثانیه بعد دوباره همین را بفرست.';
