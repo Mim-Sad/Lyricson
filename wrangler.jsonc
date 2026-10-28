@@ -13,12 +13,16 @@
     "AI_BASE_URL": "https://openrouter.ai/api/v1",
     "AI_MODEL": "google/gemini-3.8-flash"
   },
+  // No database_id on purpose: Cloudflare creates the D1 database on the first
+  // deploy (automatic provisioning) and the Worker builds its own tables.
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "lyricson",
-      "database_id": "00000000-0000-0000-0000-000000000000",
-      "migrations_dir": "migrations"
+      "database_name": "lyricson"
     }
-  ]
+  ],
+  // Self-healing tick: re-registers the webhook if it drifted and trims expired cache rows.
+  "triggers": {
+    "crons": ["*/10 * * * *"]
+  }
 }

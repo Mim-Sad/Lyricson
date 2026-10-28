@@ -6,7 +6,7 @@
  * to a small `settings` table and everything reads through `loadSettings`.
  */
 import type { AiConfig, AiProvider, Config, Env } from '../env.js';
-import { AI_PROVIDERS, isAiProvider, normalizeHttpUrl } from '../env.js';
+import { AI_PROVIDERS, isAiProvider, normalizeHttpUrl, parseAdminIds } from '../env.js';
 import { ensureSchema, nowSeconds } from './store.js';
 
 export type SettingKey =
@@ -16,7 +16,13 @@ export type SettingKey =
   | 'ai_model'
   | 'default_target_lang'
   | 'daily_limit'
-  | 'public_url';
+  | 'public_url'
+  | 'admin_ids'
+  | 'cache_enabled'
+  | 'cache_translation_days'
+  | 'cache_lyrics_days'
+  | 'maintenance'
+  | 'webhook_state';
 
 export const SETTING_KEYS: readonly SettingKey[] = [
   'ai_provider',
@@ -26,7 +32,17 @@ export const SETTING_KEYS: readonly SettingKey[] = [
   'default_target_lang',
   'daily_limit',
   'public_url',
+  'admin_ids',
+  'cache_enabled',
+  'cache_translation_days',
+  'cache_lyrics_days',
+  'maintenance',
+  'webhook_state',
 ];
+
+export const DEFAULT_CACHE_TRANSLATION_DAYS = 30;
+export const DEFAULT_CACHE_LYRICS_DAYS = 7;
+
 
 export type StoredSettings = Partial<Record<SettingKey, string>>;
 
@@ -35,6 +51,13 @@ export interface SettingsSnapshot {
   defaultTargetLang: string;
   dailyLimit: number;
   publicUrl?: string;
+  /** Env admins plus the ones added from the bot. */
+  adminIds: number[];
+  /** Ids added from the bot (removable); env admins are not in here. */
+  storedAdminIds: number[];
+  cache: { enabled: boolean; translationDays: number; lyricsDays: number };
+  /** While true, everyone except admins gets a "back soon" message. */
+  maintenance: boolean;
   /** Keys currently overridden by the admin panel rather than env. */
   fromDb: SettingKey[];
   updatedAt?: number;
@@ -74,6 +97,13 @@ export function mergeSettings(
   const defaultTargetLang = clean(stored.default_target_lang) ?? cfg.defaultTargetLang;
   const dailyLimit = positiveInt(stored.daily_limit) ?? cfg.dailyLimit;
   const publicUrl = normalizeHttpUrl(stored.public_url) ?? cfg.publicUrl;
+  const storedAdminIds = parseAdminIds(stored.admin_ids).filter((id) => !cfg.envAdminIds.includes(id));
+  const adminIds = [...cfg.envAdminIds, ...storedAdminIds];
+  const cache = {
+    enabled: clean(stored.cache_enabled) !== 'off',
+    translationDays: positiveInt(stored.cache_translation_days) ?? DEFAULT_CACHE_TRANSLATION_DAYS,
+    lyricsDays: positiveInt(stored.cache_lyrics_days) ?? DEFAULT_CACHE_LYRICS_DAYS,
+  };
 
   // Only values that actually win over env are reported as "from the panel";
   // a malformed leftover row must not pretend to be the active setting.
@@ -85,6 +115,9 @@ export function mergeSettings(
   if (clean(stored.default_target_lang)) fromDb.push('default_target_lang');
   if (positiveInt(stored.daily_limit)) fromDb.push('daily_limit');
   if (normalizeHttpUrl(stored.public_url)) fromDb.push('public_url');
+  if (stored.cache_enabled === 'off') fromDb.push('cache_enabled');
+  if (positiveInt(stored.cache_translation_days)) fromDb.push('cache_translation_days');
+  if (positiveInt(stored.cache_lyrics_days)) fromDb.push('cache_lyrics_days');
 
   const ai: AiConfig = {
     provider,
@@ -99,6 +132,10 @@ export function mergeSettings(
     defaultTargetLang,
     dailyLimit,
     ...(publicUrl ? { publicUrl } : {}),
+    adminIds,
+    storedAdminIds,
+    cache,
+    maintenance: clean(stored.maintenance) === 'on',
     fromDb,
     ...(updatedAt ? { updatedAt } : {}),
   };
@@ -194,4 +231,18 @@ export function maskSecret(secret: string | undefined): string {
   if (!secret) return '';
   if (secret.length <= 8) return '••••';
   return `${secret.slice(0, 5)}…${secret.slice(-4)}`;
+}
+
+/** Adds a numeric id to the admins stored in D1 (env admins are always admins). */
+export async function addAdminId(env: Env, userId: number): Promise<void> {
+  const stored = await readStoredSettings(env);
+  const ids = parseAdminIds(stored.values.admin_ids);
+  if (!ids.includes(userId)) ids.push(userId);
+  await saveSetting(env, 'admin_ids', ids.join(','));
+}
+
+export async function removeAdminId(env: Env, userId: number): Promise<void> {
+  const stored = await readStoredSettings(env);
+  const ids = parseAdminIds(stored.values.admin_ids).filter((id) => id !== userId);
+  await saveSetting(env, 'admin_ids', ids.join(','));
 }

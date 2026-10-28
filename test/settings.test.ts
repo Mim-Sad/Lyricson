@@ -128,3 +128,56 @@ describe('parseAdminCallback', () => {
     expect(parseAdminCallback('a:')).toBeNull();
   });
 });
+
+describe('admins, cache policy and maintenance', () => {
+  it('merges env admins with admins added from the bot', () => {
+    const cfg = makeConfig({ ADMIN_USER_ID: '111' });
+    const snapshot = mergeSettings(cfg, { admin_ids: '222, 111, 333' });
+    expect(snapshot.adminIds).toEqual([111, 222, 333]);
+    expect(snapshot.storedAdminIds).toEqual([222, 333]);
+  });
+
+  it('has cache on with sane lifetimes unless the panel changes them', () => {
+    const cfg = makeConfig();
+    expect(mergeSettings(cfg, {}).cache).toEqual({ enabled: true, translationDays: 30, lyricsDays: 7 });
+    const custom = mergeSettings(cfg, {
+      cache_enabled: 'off',
+      cache_translation_days: '3',
+      cache_lyrics_days: 'oops',
+    });
+    expect(custom.cache).toEqual({ enabled: false, translationDays: 3, lyricsDays: 7 });
+    expect(custom.fromDb).toEqual(expect.arrayContaining(['cache_enabled', 'cache_translation_days']));
+  });
+
+  it('only reports maintenance when explicitly on', () => {
+    const cfg = makeConfig();
+    expect(mergeSettings(cfg, {}).maintenance).toBe(false);
+    expect(mergeSettings(cfg, { maintenance: 'on' }).maintenance).toBe(true);
+  });
+
+  it('does not let the reset screen touch admins or maintenance', () => {
+    expect(parseAdminCallback('a:x:admin_ids')).toBeNull();
+    expect(parseAdminCallback('a:x:maintenance')).toBeNull();
+    expect(parseAdminCallback('a:x:cache_enabled')).toEqual({ kind: 'clear', key: 'cache_enabled' });
+  });
+
+  it('parses the new panel callbacks', () => {
+    expect(parseAdminCallback('a:admins')).toEqual({ kind: 'screen', screen: 'admins' });
+    expect(parseAdminCallback('a:cache')).toEqual({ kind: 'screen', screen: 'cache' });
+    expect(parseAdminCallback('a:cache_clear')).toEqual({ kind: 'clearCache' });
+    expect(parseAdminCallback('a:rm:12345')).toEqual({ kind: 'removeAdmin', id: 12345 });
+    expect(parseAdminCallback('a:rm:abc')).toBeNull();
+    expect(parseAdminCallback('a:tm')).toEqual({ kind: 'toggleMaintenance' });
+  });
+
+  it('derives a stable webhook secret from the token when none is set', async () => {
+    const { webhookSecretFor } = await import('../src/env.js');
+    const a = await webhookSecretFor(makeConfig());
+    const b = await webhookSecretFor(makeConfig());
+    const other = await webhookSecretFor(makeConfig({ TELEGRAM_BOT_TOKEN: '999:zzz' }));
+    expect(a).toMatch(/^[0-9a-f]{64}$/);
+    expect(a).toBe(b);
+    expect(a).not.toBe(other);
+    expect(await webhookSecretFor(makeConfig({ TELEGRAM_WEBHOOK_SECRET: 'mine' }))).toBe('mine');
+  });
+});

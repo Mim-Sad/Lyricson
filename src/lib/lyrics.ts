@@ -3,13 +3,12 @@
  * Every call is cached in D1 so repeated taps cost nothing.
  */
 import { LYRICSON_UA } from './identify.js';
-import { cacheGet, cachePut } from './store.js';
+import { cacheGet, cachePolicy, cachePut } from './store.js';
 import { normalize, type SearchHint } from './text.js';
 import type { TrackSummary } from './types.js';
 
 const LRCLIB_BASE = 'https://lrclib.net/api';
 const SEARCH_TTL = 60 * 60 * 24;
-const TRACK_TTL = 60 * 60 * 24 * 7;
 const REQUEST_TIMEOUT_MS = 12_000;
 
 interface RawTrack {
@@ -93,7 +92,7 @@ async function searchOnce(db: D1Database, hint: SearchHint): Promise<TrackSummar
   void cachePut(db, 'lyric_cache', key, summaries.slice(0, 20));
 
   const withLyrics = summaries.filter((track) => track.lyrics && track.id).slice(0, 12);
-  if (withLyrics.length > 0) {
+  if (withLyrics.length > 0 && cachePolicy.enabled) {
     // Warm the per-track cache so picking a candidate needs no extra request.
     await db.batch(
       withLyrics.map((track) =>
@@ -133,7 +132,7 @@ export function dedupeTracks(tracks: TrackSummary[]): TrackSummary[] {
 }
 
 export async function getTrackById(db: D1Database, id: number): Promise<TrackSummary | null> {
-  const cached = await cacheGet<TrackSummary>(db, 'lyric_cache', `g:${id}`, TRACK_TTL);
+  const cached = await cacheGet<TrackSummary>(db, 'lyric_cache', `g:${id}`, cachePolicy.lyricsTtl);
   if (cached) return cached;
   const raw = await lrclibFetch<RawTrack>(`/get/${id}`);
   const track = raw ? toSummary(raw) : null;

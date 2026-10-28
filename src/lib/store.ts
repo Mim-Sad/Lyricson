@@ -169,12 +169,57 @@ export async function pruneSessions(db: D1Database, olderThanSeconds = 60 * 60 *
 // Caches
 // ---------------------------------------------------------------------------
 
+/**
+ * Cache behaviour chosen in the admin panel. The bot refreshes it from the
+ * settings on every update, so all cache helpers can read it synchronously.
+ */
+export interface CachePolicy {
+  enabled: boolean;
+  /** Lifetime of a finished translation. */
+  translationTtl: number;
+  /** Lifetime of a single LRCLIB track (search result lists keep their own, shorter TTL). */
+  lyricsTtl: number;
+}
+
+const DAY = 60 * 60 * 24;
+
+export const cachePolicy: CachePolicy = {
+  enabled: true,
+  translationTtl: 30 * DAY,
+  lyricsTtl: 7 * DAY,
+};
+
+export function applyCachePolicy(policy: CachePolicy): void {
+  cachePolicy.enabled = policy.enabled;
+  cachePolicy.translationTtl = policy.translationTtl;
+  cachePolicy.lyricsTtl = policy.lyricsTtl;
+}
+
+/** Deletes rows older than their TTL; they would never be served again anyway. */
+export async function pruneCaches(db: D1Database): Promise<{ translations: number; lyrics: number }> {
+  try {
+    await ensureSchema(db);
+    const now = nowSeconds();
+    const [translations, lyrics] = await db.batch([
+      db.prepare('DELETE FROM translation_cache WHERE created_at < ?1').bind(now - cachePolicy.translationTtl),
+      db.prepare('DELETE FROM lyric_cache WHERE created_at < ?1').bind(now - Math.max(cachePolicy.lyricsTtl, 7 * DAY)),
+    ]);
+    return {
+      translations: translations?.meta?.changes ?? 0,
+      lyrics: lyrics?.meta?.changes ?? 0,
+    };
+  } catch {
+    return { translations: 0, lyrics: 0 };
+  }
+}
+
 export async function cacheGet<T>(
   db: D1Database,
   table: CacheTable,
   key: string,
   ttlSeconds: number,
 ): Promise<T | null> {
+  if (!cachePolicy.enabled) return null;
   try {
     const row = await db
       .prepare(`SELECT payload, created_at FROM ${table} WHERE key = ?1`)
@@ -189,6 +234,7 @@ export async function cacheGet<T>(
 }
 
 export async function cachePut<T>(db: D1Database, table: CacheTable, key: string, value: T): Promise<void> {
+  if (!cachePolicy.enabled) return;
   try {
     await db
       .prepare(

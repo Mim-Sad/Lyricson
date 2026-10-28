@@ -106,7 +106,10 @@ export interface Config {
   webhookSecret?: string;
   apiRoot?: string;
   adminSecret?: string;
+  /** Effective admins: env ids plus the ones added from the bot (refreshed per update). */
   adminUserIds: number[];
+  /** Admins declared in `ADMIN_USER_ID`; they cannot be removed from the panel. */
+  envAdminIds: number[];
   publicUrl?: string;
   ai: AiConfig;
   defaultTargetLang: string;
@@ -161,6 +164,7 @@ export function readConfig(env: Env): Config {
     apiRoot: clean(env.TELEGRAM_API_ROOT),
     adminSecret: clean(env.ADMIN_SECRET),
     adminUserIds: parseAdminIds(env.ADMIN_USER_ID),
+    envAdminIds: parseAdminIds(env.ADMIN_USER_ID),
     ...(publicUrl ? { publicUrl } : {}),
     ai: {
       provider,
@@ -172,6 +176,19 @@ export function readConfig(env: Env): Config {
     defaultTargetLang: clean(env.DEFAULT_TARGET_LANG) ?? 'fa',
     dailyLimit: toInt(env.DAILY_TRANSLATION_LIMIT, DEFAULT_DAILY_LIMIT),
   };
+}
+
+/**
+ * The webhook secret: `TELEGRAM_WEBHOOK_SECRET` when set, otherwise derived
+ * from the bot token (which only the owner knows), so a fresh deploy is
+ * protected without any extra configuration.
+ */
+export async function webhookSecretFor(cfg: Config): Promise<string> {
+  if (cfg.webhookSecret) return cfg.webhookSecret;
+  if (!cfg.botToken) return '';
+  const bytes = new TextEncoder().encode(`lyricson-webhook:${cfg.botToken}`);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 export interface SetupCheck {
@@ -193,7 +210,7 @@ export function setupChecks(env: Env, cfg: Config): SetupCheck[] {
     },
     {
       label: 'DB (D1)',
-      hint: 'یک دیتابیس D1 بساز و بایندینگ DB را در wrangler.jsonc بگذار.',
+      hint: 'بایندینگ DB در wrangler.jsonc باید باشد؛ هنگام دیپلوی روی Cloudflare خودکار ساخته می‌شود.',
       ok: Boolean(env.DB),
       required: true,
     },
@@ -205,20 +222,8 @@ export function setupChecks(env: Env, cfg: Config): SetupCheck[] {
     },
     {
       label: 'ADMIN_USER_ID',
-      hint: 'آیدی عددی تلگرام‌ات را بگذار تا دستور /admin و پنل تنظیمات داخل ربات فعال شود.',
+      hint: 'اختیاری: یا آیدی عددی را اینجا بگذار، یا در ربات بنویس /claim <توکن ربات> تا ادمین شوی.',
       ok: cfg.adminUserIds.length > 0,
-      required: false,
-    },
-    {
-      label: 'TELEGRAM_WEBHOOK_SECRET',
-      hint: 'برای امنیت وبهوک. /admin/setup هشدار می‌دهد اگر خالی باشد.',
-      ok: Boolean(cfg.webhookSecret),
-      required: false,
-    },
-    {
-      label: 'ADMIN_SECRET',
-      hint: 'برای باز کردن /admin/setup و ثبت خودکار وبهوک.',
-      ok: Boolean(cfg.adminSecret),
       required: false,
     },
   ];
