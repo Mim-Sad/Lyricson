@@ -24,6 +24,10 @@ export interface Env {
   /** Public origin of this Worker, used to register the webhook from the bot. */
   PUBLIC_URL?: string;
 
+  /** Optional: lets the song title link to Spotify (developer.spotify.com, client credentials). */
+  SPOTIFY_CLIENT_ID?: string;
+  SPOTIFY_CLIENT_SECRET?: string;
+
   DEFAULT_TARGET_LANG?: string;
   DAILY_TRANSLATION_LIMIT?: string;
 }
@@ -111,6 +115,7 @@ export interface Config {
   /** Admins declared in `ADMIN_USER_ID`; they cannot be removed from the panel. */
   envAdminIds: number[];
   publicUrl?: string;
+  spotify?: { id: string; secret: string };
   ai: AiConfig;
   defaultTargetLang: string;
   dailyLimit: number;
@@ -166,6 +171,9 @@ export function readConfig(env: Env): Config {
     adminUserIds: parseAdminIds(env.ADMIN_USER_ID),
     envAdminIds: parseAdminIds(env.ADMIN_USER_ID),
     ...(publicUrl ? { publicUrl } : {}),
+    ...(clean(env.SPOTIFY_CLIENT_ID) && clean(env.SPOTIFY_CLIENT_SECRET)
+      ? { spotify: { id: clean(env.SPOTIFY_CLIENT_ID) as string, secret: clean(env.SPOTIFY_CLIENT_SECRET) as string } }
+      : {}),
     ai: {
       provider,
       apiKey: clean(env.AI_API_KEY),

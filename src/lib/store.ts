@@ -5,7 +5,8 @@
  * The schema is bootstrapped lazily from the Worker itself, so a fresh database
  * works on the very first request (migrations/0001_init.sql is the same DDL).
  */
-import type { Session, SessionPayload } from './types.js';
+import type { Translation } from './prompt.js';
+import type { Session, SessionPayload, TrackSummary } from './types.js';
 
 export type CacheTable = 'lyric_cache' | 'translation_cache';
 
@@ -46,6 +47,13 @@ const SCHEMA: string[] = [
      key TEXT PRIMARY KEY,
      value TEXT NOT NULL,
      updated_at INTEGER NOT NULL
+   )`,
+  `CREATE TABLE IF NOT EXISTS shares (
+     id TEXT PRIMARY KEY,
+     track TEXT NOT NULL,
+     translation TEXT,
+     language TEXT,
+     created_at INTEGER NOT NULL
    )`,
   `CREATE TABLE IF NOT EXISTS admin_state (
      user_id INTEGER PRIMARY KEY,
@@ -358,5 +366,60 @@ export async function quotaUsed(db: D1Database, userId: number): Promise<number>
     return row?.count ?? 0;
   } catch {
     return 0;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Shared pages (the links on the music card)
+// ---------------------------------------------------------------------------
+
+export interface ShareRecord {
+  id: string;
+  track: TrackSummary;
+  translation?: Translation;
+  language?: string;
+}
+
+/** Stores (or refreshes) the track and optionally its translation behind a short public id. */
+export async function saveShare(
+  db: D1Database,
+  id: string,
+  track: TrackSummary,
+  translation?: { value: Translation; language: string },
+): Promise<void> {
+  await ensureSchema(db);
+  await db
+    .prepare(
+      `INSERT INTO shares (id, track, translation, language, created_at) VALUES (?1, ?2, ?3, ?4, ?5)
+       ON CONFLICT(id) DO UPDATE SET track = excluded.track,
+         translation = COALESCE(excluded.translation, shares.translation),
+         language = COALESCE(excluded.language, shares.language)`,
+    )
+    .bind(
+      id,
+      JSON.stringify(track),
+      translation ? JSON.stringify(translation.value) : null,
+      translation?.language ?? null,
+      nowSeconds(),
+    )
+    .run();
+}
+
+export async function getShare(db: D1Database, id: string): Promise<ShareRecord | null> {
+  await ensureSchema(db);
+  const row = await db
+    .prepare('SELECT id, track, translation, language FROM shares WHERE id = ?1')
+    .bind(id)
+    .first<{ id: string; track: string; translation: string | null; language: string | null }>();
+  if (!row) return null;
+  try {
+    return {
+      id: row.id,
+      track: JSON.parse(row.track) as TrackSummary,
+      ...(row.translation ? { translation: JSON.parse(row.translation) as Translation } : {}),
+      ...(row.language ? { language: row.language } : {}),
+    };
+  } catch {
+    return null;
   }
 }

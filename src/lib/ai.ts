@@ -130,16 +130,16 @@ export function parseTranslation(raw: string, sourceLines: string[]): ParsedPayl
   return parsed;
 }
 
-interface ChatResponse {
+export interface ChatResponse {
   choices?: {
-    message?: { content?: unknown };
+    message?: { content?: unknown; annotations?: { type?: string; url_citation?: { url?: string; title?: string } }[] };
     text?: string;
     finish_reason?: string;
   }[];
   error?: { message?: string };
 }
 
-function contentFromChat(payload: ChatResponse): string | null {
+export function contentFromChat(payload: ChatResponse): string | null {
   const choice = payload.choices?.[0];
   if (!choice) return null;
   const content = choice.message?.content;
@@ -198,7 +198,7 @@ function headersFor(ai: AiConfig): Record<string, string> {
   return headers;
 }
 
-async function postChat(
+export async function postChat(
   ai: AiConfig,
   body: Record<string, unknown>,
   fetcher: typeof fetch,

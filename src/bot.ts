@@ -6,6 +6,18 @@
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import type { UserFromGetMe } from 'grammy/types';
 import { handleAdminCallback, handleAdminCommand, handleAdminText } from './admin.js';
+import {
+  musicInfoFor,
+  onCard,
+  onInsight,
+  sendPreviewAudio,
+  sendStatus,
+  settle,
+  shareIdFor,
+  trackOfSession,
+  withTimeout,
+} from './extras.js';
+import { primaryLink } from './lib/music.js';
 import type { Config, Env } from './env.js';
 import { describeAiError, translateTrack } from './lib/ai.js';
 import { isAdmin } from './lib/admin-panel.js';
@@ -37,6 +49,7 @@ import {
   getSession,
   getTargetLang,
   quotaUsed,
+  saveShare,
   setSessionMessageId,
   setTargetLang,
 } from './lib/store.js';
@@ -226,7 +239,19 @@ export function createBot(env: Env, cfg: Config, botInfo?: UserFromGetMe): Bot {
       await onShowPage(ctx, env, cfg, session, parsed.index);
       return;
     }
-    await onTranslate(ctx, env, cfg, session);
+    if (parsed.action === 't') {
+      await onTranslate(ctx, env, cfg, session);
+      return;
+    }
+    const track = trackOfSession(session);
+    if (!track) {
+      await ctx.answerCallbackQuery({ text: 'این دکمه منقضی شده؛ دوباره جست‌وجو کن.' });
+      return;
+    }
+    if (parsed.action === 'c') await onCard(ctx, env, cfg, track);
+    else if (parsed.action === 'b') await onInsight(ctx, env, cfg, 'story', track);
+    else if (parsed.action === 'w') await onInsight(ctx, env, cfg, 'words', track);
+    else await onInsight(ctx, env, cfg, 'artist', track);
   });
 
   return bot;
@@ -429,6 +454,11 @@ async function sendTrack(
   const language = languageFor((await getTargetLang(env.DB, userId)) ?? settings.defaultTargetLang);
   if (options.notice) await ctx.reply(options.notice, HTML).catch(() => undefined);
 
+  // Cover, album and links come from Deezer (+ Spotify if configured); never wait long for them.
+  const info = await withTimeout(musicInfoFor(env, settings, track), 3000);
+  const audioSent = info?.preview ? await sendPreviewAudio(ctx, env, info) : false;
+  const statusForLyrics = audioSent ? undefined : options.statusId;
+
   const searchSessionId =
     options.searchSessionId ??
     (options.candidates
@@ -449,7 +479,7 @@ async function sendTrack(
     payload: { track, ...(searchSessionId ? { searchSid: searchSessionId } : {}) },
   });
 
-  const chunks = splitMessage(renderLyricsMessage(track));
+  const chunks = splitMessage(renderLyricsMessage(track, primaryLink(info)));
   let lastMessageId: number | undefined;
   for (const [index, chunk] of chunks.entries()) {
     const isLast = index === chunks.length - 1;
@@ -462,9 +492,12 @@ async function sendTrack(
         }
       : {};
     // The first chunk replaces the "searching…" message; the rest follow as new messages.
-    lastMessageId = await settle(ctx, index === 0 ? options.statusId : undefined, chunk, extra);
+    lastMessageId = await settle(ctx, index === 0 ? statusForLyrics : undefined, chunk, extra);
   }
   if (lastMessageId !== undefined) await setSessionMessageId(env.DB, sessionId, lastMessageId);
+  // The audio went out as its own message, so the "searching…" placeholder is no longer needed.
+  if (audioSent && options.statusId) await ctx.api.deleteMessage(chatId, options.statusId).catch(() => undefined);
+  await saveShare(env.DB, await shareIdFor(track), track).catch((error) => logError('share', error));
 }
 
 async function showCandidates(
@@ -624,8 +657,13 @@ async function onTranslate(ctx: BotContext, env: Env, cfg: Config, session: Sess
       await cachePut(env.DB, 'translation_cache', cacheKey, translation);
     }
 
+    const info = await withTimeout(musicInfoFor(env, settings, track), 2500);
+    const link = primaryLink(info);
+    await saveShare(env.DB, await shareIdFor(track), track, { value: translation, language: language.code }).catch(
+      (error) => logError('share', error),
+    );
     const body =
-      renderTranslationMessage(track, translation, language.nativeName) +
+      renderTranslationMessage(track, translation, language.nativeName, link) +
       (translation.missing > 0 ? M.partialNotice(translation.missing) : '');
     const chunks = splitMessage(body);
     await ctx.api.editMessageText(chatId, placeholder.message_id, chunks[0] ?? '', HTML);
@@ -663,39 +701,6 @@ async function sendLanguageMenu(ctx: BotContext, env: Env, cfg: Config, edit: bo
 
 function userIdOf(ctx: BotContext): number {
   return ctx.from?.id ?? 0;
-}
-
-/**
- * Answers by editing the "searching…" message when there is one (so the user
- * saw a reply instantly), otherwise sends a fresh message. Returns the id of
- * the message that now holds `text`.
- */
-async function settle(
-  ctx: BotContext,
-  statusId: number | undefined,
-  text: string,
-  extra: { reply_markup?: InlineKeyboard } = {},
-): Promise<number> {
-  const chatId = chatIdOf(ctx);
-  if (statusId && chatId) {
-    try {
-      await ctx.api.editMessageText(chatId, statusId, text, { ...HTML, ...extra });
-      return statusId;
-    } catch (error) {
-      if (error instanceof Error && /message is not modified/i.test(error.message)) return statusId;
-      logError('settle', error);
-    }
-  }
-  const sent = await ctx.reply(text, { ...HTML, ...extra });
-  return sent.message_id;
-}
-
-async function sendStatus(ctx: BotContext, text: string): Promise<number | undefined> {
-  try {
-    return (await ctx.reply(text, HTML)).message_id;
-  } catch {
-    return undefined;
-  }
 }
 
 function chatIdOf(ctx: BotContext): number | null {

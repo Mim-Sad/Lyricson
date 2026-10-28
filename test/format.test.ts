@@ -2,9 +2,7 @@ import type { InlineKeyboard } from 'grammy';
 import { describe, expect, it } from 'vitest';
 import {
   candidateKeyboard,
-  artistHashtags,
   escapeHtml,
-  hashtag,
   lyricsKeyboard,
   parseCallbackData,
   renderCandidatesMessage,
@@ -52,17 +50,18 @@ describe('escapeHtml', () => {
   });
 });
 
-describe('hashtags', () => {
-  it('turns artists into filterable hashtags', () => {
-    expect(hashtag('twenty one pilots')).toBe('#twenty_one_pilots');
-    expect(hashtag('AC/DC')).toBe('#AC_DC');
-    expect(hashtag('!!!')).toBe('');
-    expect(artistHashtags('Drake feat. Rihanna & Kanye West')).toBe('#Drake #Rihanna #Kanye_West');
+describe('header', () => {
+  it('shows title, artist and album without hashtags, linking the title when a link is known', () => {
+    const text = renderLyricsMessage(TRACK, 'https://open.spotify.com/track/abc');
+    expect(text).toContain('<a href="https://open.spotify.com/track/abc"><b>Yellow</b></a>');
+    expect(text).toContain('🎤 Coldplay');
+    expect(text).toContain('💿 Parachutes');
+    expect(text).not.toContain('#');
+    expect(renderLyricsMessage(TRACK)).not.toContain('<a href');
   });
 
-  it('puts the artist hashtag and the source footer in the lyrics message', () => {
-    const text = renderLyricsMessage({ ...TRACK, artistName: 'twenty one pilots', source: 'lyrics.ovh' });
-    expect(text).toContain('#twenty_one_pilots');
+  it('puts the source footer last', () => {
+    const text = renderLyricsMessage({ ...TRACK, source: 'lyrics.ovh' });
     expect(text.trim().endsWith('lyrics.ovh</i>')).toBe(true);
   });
 });
@@ -137,7 +136,15 @@ describe('inline keyboards', () => {
     const grid = rows(keyboard);
     expect(grid[0]?.[0]?.callback_data).toBe('t:trk12345:0');
     expect(grid[0]?.[0]?.text).toContain('ترجمهٔ خط‌به‌خط');
-    expect(grid[1]?.[0]?.callback_data).toBe('p:src12345:0');
+    expect(grid[1]?.map((button) => button.callback_data)).toEqual(['c:trk12345:0', 'b:trk12345:0']);
+    expect(grid[2]?.map((button) => button.callback_data)).toEqual(['w:trk12345:0', 'r:trk12345:0']);
+    expect(grid[3]?.[0]?.callback_data).toBe('p:src12345:0');
+  });
+
+  it('parses the new panel callbacks', () => {
+    expect(parseCallbackData('c:trk12345:0')?.action).toBe('c');
+    expect(parseCallbackData('r:trk12345:0')?.action).toBe('r');
+    expect(parseCallbackData('x:trk12345:0')).toBeNull();
   });
 
   it('renders the candidate header with paging info', () => {

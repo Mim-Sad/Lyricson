@@ -22,7 +22,9 @@ export type SettingKey =
   | 'cache_translation_days'
   | 'cache_lyrics_days'
   | 'maintenance'
-  | 'webhook_state';
+  | 'webhook_state'
+  | 'spotify_client_id'
+  | 'spotify_client_secret';
 
 export const SETTING_KEYS: readonly SettingKey[] = [
   'ai_provider',
@@ -38,6 +40,8 @@ export const SETTING_KEYS: readonly SettingKey[] = [
   'cache_lyrics_days',
   'maintenance',
   'webhook_state',
+  'spotify_client_id',
+  'spotify_client_secret',
 ];
 
 /** 0 = never expires. */
@@ -57,6 +61,7 @@ export interface SettingsSnapshot {
   /** Ids added from the bot (removable); env admins are not in here. */
   storedAdminIds: number[];
   cache: { enabled: boolean; translationDays: number; lyricsDays: number };
+  spotify?: { id: string; secret: string };
   /** While true, everyone except admins gets a "back soon" message. */
   maintenance: boolean;
   /** Keys currently overridden by the admin panel rather than env. */
@@ -100,6 +105,8 @@ export function mergeSettings(
   const publicUrl = normalizeHttpUrl(stored.public_url) ?? cfg.publicUrl;
   const storedAdminIds = parseAdminIds(stored.admin_ids).filter((id) => !cfg.envAdminIds.includes(id));
   const adminIds = [...cfg.envAdminIds, ...storedAdminIds];
+  const spotifyId = clean(stored.spotify_client_id) ?? cfg.spotify?.id;
+  const spotifySecret = clean(stored.spotify_client_secret) ?? cfg.spotify?.secret;
   const cache = {
     enabled: clean(stored.cache_enabled) !== 'off',
     translationDays: positiveInt(stored.cache_translation_days) ?? DEFAULT_CACHE_TRANSLATION_DAYS,
@@ -116,6 +123,8 @@ export function mergeSettings(
   if (clean(stored.default_target_lang)) fromDb.push('default_target_lang');
   if (positiveInt(stored.daily_limit)) fromDb.push('daily_limit');
   if (normalizeHttpUrl(stored.public_url)) fromDb.push('public_url');
+  if (clean(stored.spotify_client_id)) fromDb.push('spotify_client_id');
+  if (clean(stored.spotify_client_secret)) fromDb.push('spotify_client_secret');
   if (stored.cache_enabled === 'off') fromDb.push('cache_enabled');
   if (positiveInt(stored.cache_translation_days)) fromDb.push('cache_translation_days');
   if (positiveInt(stored.cache_lyrics_days)) fromDb.push('cache_lyrics_days');
@@ -137,6 +146,7 @@ export function mergeSettings(
     storedAdminIds,
     cache,
     maintenance: clean(stored.maintenance) === 'on',
+    ...(spotifyId && spotifySecret ? { spotify: { id: spotifyId, secret: spotifySecret } } : {}),
     fromDb,
     ...(updatedAt ? { updatedAt } : {}),
   };

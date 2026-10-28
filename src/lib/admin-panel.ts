@@ -28,7 +28,8 @@ export type AdminScreen =
   | 'reset'
   | 'webhook'
   | 'admins'
-  | 'cache';
+  | 'cache'
+  | 'spotify';
 
 export type AdminInputField =
   | 'ai_key'
@@ -37,6 +38,8 @@ export type AdminInputField =
   | 'daily_limit'
   | 'public_url'
   | 'admin_add'
+  | 'spotify_id'
+  | 'spotify_secret'
   | 'cache_translation_days'
   | 'cache_lyrics_days';
 
@@ -71,6 +74,8 @@ export const SETTING_LABELS: Record<SettingKey, string> = {
   cache_lyrics_days: 'ماندگاری کش متن',
   maintenance: 'حالت تعمیر',
   webhook_state: 'وضعیت وبهوک',
+  spotify_client_id: 'Spotify Client ID',
+  spotify_client_secret: 'Spotify Client Secret',
 };
 
 /** Settings the reset screen may clear (admins, maintenance and webhook state have their own controls). */
@@ -85,6 +90,8 @@ const RESETTABLE: readonly SettingKey[] = [
   'cache_enabled',
   'cache_translation_days',
   'cache_lyrics_days',
+  'spotify_client_id',
+  'spotify_client_secret',
 ];
 
 const SCREEN_CALLBACKS: Record<string, AdminScreen> = {
@@ -97,6 +104,7 @@ const SCREEN_CALLBACKS: Record<string, AdminScreen> = {
   webhook: 'webhook',
   admins: 'admins',
   cache: 'cache',
+  spotify: 'spotify',
 };
 
 const INPUT_CALLBACKS: Record<string, AdminInputField> = {
@@ -106,6 +114,8 @@ const INPUT_CALLBACKS: Record<string, AdminInputField> = {
   limit: 'daily_limit',
   hookurl: 'public_url',
   addadmin: 'admin_add',
+  spid: 'spotify_id',
+  spsec: 'spotify_secret',
   ctdays: 'cache_translation_days',
   cldays: 'cache_lyrics_days',
 };
@@ -213,7 +223,9 @@ function homePanel(snapshot: SettingsSnapshot, cfg: Config): AdminPanel {
     .text('💾 کش', 'a:cache')
     .text('👮 ادمین‌ها', 'a:admins')
     .row()
+    .text('🎧 اسپاتیفای', 'a:spotify')
     .text('🔗 وبهوک', 'a:webhook')
+    .row()
     .text(snapshot.maintenance ? '▶️ پایان حالت تعمیر' : '⏸ حالت تعمیر', 'a:tm')
     .row()
     .text('♻️ بازگشت به پیش‌فرض‌های env', 'a:reset');
@@ -375,6 +387,23 @@ function days(value: number): string {
   return value > 0 ? `${faDigits(value)} روز` : 'بی‌نهایت';
 }
 
+function spotifyPanel(snapshot: SettingsSnapshot): AdminPanel {
+  const keyboard = new InlineKeyboard()
+    .text('🆔 Client ID', 'a:spid')
+    .text('🔑 Client Secret', 'a:spsec')
+    .row()
+    .text('⬅️ پنل', 'a:home');
+  const text = [
+    '🎧 <b>اسپاتیفای (اختیاری)</b>',
+    '',
+    `• وضعیت: ${snapshot.spotify ? '✅ تنظیم شده' : '⛔️ تنظیم نشده'}`,
+    '',
+    'با این دو مقدار، اسم موزیک در پیام به لینک اسپاتیفای وصل می‌شود. بدون آن لینک Deezer استفاده می‌شود.',
+    'از developer.spotify.com ← Dashboard ← Create app (رایگان) ← Client ID و Client Secret را بگیر.',
+  ].join('\n');
+  return { text, keyboard };
+}
+
 function cachePanel(snapshot: SettingsSnapshot): AdminPanel {
   const keyboard = new InlineKeyboard()
     .text(snapshot.cache.enabled ? '⛔️ خاموش‌کردن کش' : '✅ روشن‌کردن کش', 'a:tc')
@@ -421,6 +450,8 @@ export function renderScreen(
       return adminsPanel(snapshot, cfg);
     case 'cache':
       return cachePanel(snapshot);
+    case 'spotify':
+      return spotifyPanel(snapshot);
     case 'home':
     default:
       return homePanel(snapshot, cfg);
@@ -438,6 +469,8 @@ export const INPUT_PROMPTS: Record<AdminInputField, string> = {
   admin_add: '👮 آیدی عددی تلگرام شخص را بفرست (فقط رقم؛ مثلاً <code>123456789</code>).',
   cache_translation_days: '⏳ ماندگاری کش ترجمه را به روز بفرست (۱ تا ۳۶۵)، یا ۰ برای بی‌نهایت.',
   cache_lyrics_days: '⏳ ماندگاری کش متن آهنگ را به روز بفرست (۱ تا ۳۶۵)، یا ۰ برای بی‌نهایت.',
+  spotify_id: '🆔 Spotify Client ID را بفرست.',
+  spotify_secret: '🔑 Spotify Client Secret را بفرست؛ بعد از ذخیره پیامت پاک می‌شود.',
   public_url:
     '📝 آدرس عمومی ورکر را بفرست؛ مثلاً:\n<code>https://lyricson.example.workers.dev</code>',
 };

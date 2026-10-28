@@ -433,6 +433,18 @@ export async function handleAdminText(
       return true;
     }
 
+    case 'spotify_id':
+    case 'spotify_secret': {
+      if (!/^[A-Za-z0-9]{16,64}$/.test(value)) {
+        await ctx.reply('⛔️ مقدار معتبر نیست؛ باید یک رشتهٔ حرف و عدد (بدون فاصله) باشد.', HTML);
+        return true;
+      }
+      await saveSetting(env, field === 'spotify_id' ? 'spotify_client_id' : 'spotify_client_secret', value);
+      if (field === 'spotify_secret') await ctx.deleteMessage().catch(() => undefined);
+      await refresh(ctx, env, cfg, 'spotify', '✅ ذخیره شد.');
+      return true;
+    }
+
     case 'admin_add': {
       const id = Number.parseInt(value, 10);
       if (!/^\d{5,15}$/.test(value) || !Number.isSafeInteger(id)) {

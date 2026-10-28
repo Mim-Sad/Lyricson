@@ -61,3 +61,12 @@ CREATE TABLE IF NOT EXISTS admin_state (
   action      TEXT NOT NULL,
   created_at  INTEGER NOT NULL
 );
+
+-- Public pages behind the "music card" links (/l/<id> lyrics, /t/<id> lyrics + translation).
+CREATE TABLE IF NOT EXISTS shares (
+  id          TEXT PRIMARY KEY,
+  track       TEXT NOT NULL,
+  translation TEXT,
+  language    TEXT,
+  created_at  INTEGER NOT NULL
+);

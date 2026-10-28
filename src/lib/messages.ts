@@ -138,3 +138,7 @@ export function partialNotice(missing: number): string {
 }
 
 export const LYRICS_BUSY = '⏳ سرویس‌های متن الان شلوغ‌اند و جواب ندادند؛ چند ثانیه بعد همین را دوباره بفرست.';
+
+export const STORY_WORKING = '📖 دارم دربارهٔ داستان این موزیک تحقیق می‌کنم (مصاحبه‌ها، مقاله‌ها و بحث‌ها)؛ ممکنه تا ۲۰ ثانیه طول بکشه…';
+export const WORDS_WORKING = '🎓 دارم کلمه‌های ارزشمند متن رو انتخاب و مرتب می‌کنم…';
+export const ARTIST_WORKING = '👤 دارم دربارهٔ هنرمند تحقیق می‌کنم…';

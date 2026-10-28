@@ -25,35 +25,16 @@ const SOURCE_LABELS: Record<TrackSummary['source'], string> = {
   user: 'متن ارسالی خودت',
 };
 
-/** "Twenty One Pilots" -> "#Twenty_One_Pilots"; empty when nothing usable is left. */
-export function hashtag(name: string): string {
-  const tag = name
-    .normalize('NFKC')
-    .replace(/[^\p{L}\p{N}]+/gu, '_')
-    .replace(/^_+|_+$/g, '');
-  return tag ? `#${tag}` : '';
-}
-
-/** One hashtag per credited artist ("A feat. B & C" -> #A #B #C), at most three. */
-export function artistHashtags(artist: string): string {
-  const parts = artist
-    .split(/\s*(?:,|&|×|\bfeat\.?|\bft\.?|\bfeaturing\b|\bwith\b|\band\b)\s*/i)
-    .map((part) => hashtag(part))
-    .filter(Boolean);
-  const unique = [...new Set(parts)].slice(0, 3);
-  return unique.length > 0 ? unique.join(' ') : '';
-}
-
-function trackHeader(track: TrackSummary): string[] {
-  const tags = artistHashtags(track.artistName);
-  const details = [
+function trackHeader(track: TrackSummary, link?: string): string[] {
+  const title = `<b>${escapeHtml(track.trackName)}</b>`;
+  const meta = [
     track.albumName ? `💿 ${escapeHtml(track.albumName)}` : '',
     track.duration ? `⏱ ${faDigits(clock(track.duration))}` : '',
   ].filter(Boolean);
   return [
-    `🎵 <b>${escapeHtml(track.trackName)}</b>`,
-    `🎤 ${tags || escapeHtml(track.artistName)}`,
-    ...(details.length > 0 ? [details.join('  ·  ')] : []),
+    `🎵 ${link ? `<a href="${escapeHtml(link).replace(/"/g, '&quot;')}">${title}</a>` : title}`,
+    `🎤 ${escapeHtml(track.artistName)}`,
+    ...(meta.length > 0 ? [meta.join('  ·  ')] : []),
   ];
 }
 
@@ -63,15 +44,16 @@ function sourceFooter(track: TrackSummary): string {
     : `📚 <i>منبع متن: ${SOURCE_LABELS[track.source]}</i>`;
 }
 
-export function renderLyricsMessage(track: TrackSummary): string {
+export function renderLyricsMessage(track: TrackSummary, link?: string): string {
   const body = escapeHtml(track.lyrics?.trim() ?? '');
-  return [...trackHeader(track), RULE, '', body, '', RULE, sourceFooter(track)].join('\n');
+  return [...trackHeader(track, link), RULE, '', body, '', RULE, sourceFooter(track)].join('\n');
 }
 
 export function renderTranslationMessage(
   track: TrackSummary,
   translation: Translation,
   languageName: string,
+  link?: string,
   themeLabel = 'مفهوم کلی',
   moodLabel = 'حال‌و‌هوا',
 ): string {
@@ -84,7 +66,7 @@ export function renderTranslationMessage(
     return `${source}\n${escapeHtml(line.text)}${note}`;
   });
 
-  const head = [`🇮🇷 <b>ترجمهٔ ${escapeHtml(languageName)}</b>`, ...trackHeader(track), RULE];
+  const head = [`🇮🇷 <b>ترجمهٔ ${escapeHtml(languageName)}</b>`, ...trackHeader(track, link), RULE];
   if (translation.theme) head.push(`🧠 <b>${themeLabel}:</b> ${escapeHtml(translation.theme)}`);
   if (translation.mood) head.push(`💫 <b>${moodLabel}:</b> ${escapeHtml(translation.mood)}`);
   if (translation.theme || translation.mood) head.push(RULE);
@@ -187,6 +169,13 @@ export function lyricsKeyboard(
     new InlineKeyboard().text(`🇮🇷 ترجمهٔ خط‌به‌خط · ${options.languageName}`, `t:${sessionId}:0`),
     'primary',
   );
+  keyboard
+    .row()
+    .text('🖼 کارت موزیک', `c:${sessionId}:0`)
+    .text('📖 داستان موزیک', `b:${sessionId}:0`)
+    .row()
+    .text('🎓 کلمات کلیدی', `w:${sessionId}:0`)
+    .text('👤 دربارهٔ هنرمند', `r:${sessionId}:0`);
   if (options.searchSessionId) {
     keyboard.row().text('🔁 نتایج دیگر', `p:${options.searchSessionId}:0`);
   }
@@ -194,15 +183,15 @@ export function lyricsKeyboard(
 }
 
 export interface CallbackData {
-  action: 's' | 't' | 'p';
+  action: 's' | 't' | 'p' | 'c' | 'b' | 'w' | 'r';
   sessionId: string;
   index: number;
 }
 
 export function parseCallbackData(data: string): CallbackData | null {
-  const match = /^([stp]):([a-z0-9]{4,16}):(\d{1,4})$/.exec(data);
+  const match = /^([stpcbwr]):([a-z0-9]{4,16}):(\d{1,4})$/.exec(data);
   if (!match) return null;
-  const action = match[1] as 's' | 't' | 'p';
+  const action = match[1] as CallbackData['action'];
   return { action, sessionId: match[2] ?? '', index: Number.parseInt(match[3] ?? '0', 10) };
 }
 
