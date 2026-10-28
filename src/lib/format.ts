@@ -23,7 +23,10 @@ export function renderLyricsMessage(track: TrackSummary): string {
       track.duration ? ` · ⏱ ${faDigits(clock(track.duration))}` : ''
     }`,
   ].join('\n');
-  const source = track.source === 'user' ? '📜 متن ارسالی خودت' : '📚 منبع متن: LRCLIB';
+  const source =
+    track.source === 'user'
+      ? '📜 متن ارسالی خودت'
+      : `📚 منبع متن: ${track.source === 'lyrics.ovh' ? 'lyrics.ovh' : 'LRCLIB'}`;
   const body = track.lyrics?.trim() ?? '';
   return `${header}\n${source}\n\n${body}`;
 }

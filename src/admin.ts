@@ -32,6 +32,7 @@ import {
   setAdminState,
 } from './lib/store.js';
 import { getWebhookInfo, registerBotWebhook, telegramApi } from './lib/telegram.js';
+import { probeFallback } from './lib/fallback-lyrics.js';
 import { probeLrclib } from './lib/lyrics.js';
 import { faDigits } from './lib/text.js';
 
@@ -200,9 +201,10 @@ export async function handleAdminCallback(
 
     case 'diagnose': {
       const snapshot = await loadSettings(env, cfg, { fresh: true });
-      const [me, lyrics, ai, hook] = await Promise.all([
+      const [me, lyrics, backup, ai, hook] = await Promise.all([
         telegramApi<{ username?: string }>(cfg, 'getMe'),
         probeLrclib(),
+        probeFallback(),
         testAiConnection(snapshot.ai),
         getWebhookInfo(cfg),
       ]);
@@ -215,6 +217,7 @@ export async function handleAdminCallback(
           hook.result?.last_error_message ? `\n   ⚠️ ${escapeHtml(hook.result.last_error_message)}` : ''
         }`,
         `${mark(lyrics.ok)} LRCLIB (جست‌وجوی متن): ${escapeHtml(lyrics.detail)}`,
+        `${mark(backup.ok)} lyrics.ovh (منبع دوم): ${escapeHtml(backup.detail)}`,
         `${mark(ai.ok)} هوش مصنوعی (<code>${escapeHtml(ai.model || '—')}</code>): ${escapeHtml(ai.detail ?? '')}`,
         `کلید: ${snapshot.ai.apiKey ? '✅ ثبت شده' : '⛔️ ثبت نشده'} · ادمین‌ها: ${faDigits(snapshot.adminIds.length)}`,
       ];
