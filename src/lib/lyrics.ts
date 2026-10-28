@@ -24,21 +24,51 @@ interface RawTrack {
   syncedLyrics?: string | null;
 }
 
+const LRCLIB_HEADERS = {
+  accept: 'application/json',
+  'user-agent': LYRICSON_UA,
+  'lrclib-client': 'Lyricson v1.0 (https://github.com/Mim-Sad/Lyricson)',
+};
+
+/** Set when LRCLIB answered 429 even after retries, so the bot can say "busy" instead of "not found". */
+let throttledAt = 0;
+
+export function lrclibWasThrottled(withinMs = 20_000): boolean {
+  return Date.now() - throttledAt < withinMs;
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function lrclibFetch<T>(path: string): Promise<T | null> {
-  try {
-    const response = await fetch(`${LRCLIB_BASE}${path}`, {
-      headers: { accept: 'application/json', 'user-agent': LYRICSON_UA },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-    if (!response.ok) {
-      logError('lrclib', new Error(`HTTP ${response.status}`), { path });
+  // Workers share egress IPs, so LRCLIB sometimes answers 429; wait and retry.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const response = await fetch(`${LRCLIB_BASE}${path}`, {
+        headers: LRCLIB_HEADERS,
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+      if (response.status === 404) return null;
+      if (response.status === 429 || response.status >= 500) {
+        if (response.status === 429) throttledAt = Date.now();
+        const retryAfter = Number.parseFloat(response.headers.get('retry-after') ?? '');
+        const wait = Number.isFinite(retryAfter) ? Math.min(retryAfter * 1000, 2500) : 600 * (attempt + 1);
+        if (attempt < 2) {
+          await sleep(wait);
+          continue;
+        }
+      }
+      if (!response.ok) {
+        logError('lrclib', new Error(`HTTP ${response.status}`), { path });
+        return null;
+      }
+      throttledAt = 0;
+      return (await response.json()) as T;
+    } catch (error) {
+      logError('lrclib', error, { path });
       return null;
     }
-    return (await response.json()) as T;
-  } catch (error) {
-    logError('lrclib', error, { path });
-    return null;
   }
+  return null;
 }
 
 /** One live request for the admin diagnostics screen. */
@@ -46,7 +76,7 @@ export async function probeLrclib(): Promise<{ ok: boolean; detail: string }> {
   const started = Date.now();
   try {
     const response = await fetch(`${LRCLIB_BASE}/search?q=${encodeURIComponent('coldplay yellow')}`, {
-      headers: { accept: 'application/json', 'user-agent': LYRICSON_UA },
+      headers: LRCLIB_HEADERS,
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     const ms = Date.now() - started;
@@ -130,9 +160,13 @@ async function searchOnce(db: D1Database, hint: SearchHint): Promise<TrackSummar
 export async function searchTracks(db: D1Database, hints: SearchHint[], limit = 12): Promise<TrackSummary[]> {
   const attempts = hints.slice(0, 3);
   if (attempts.length === 0) return [];
-  const lists = await Promise.all(attempts.map((hint) => searchOnce(db, hint)));
-
-  const merged = lists.flat();
+  // One at a time and only until something usable turns up: three parallel
+  // requests are what trips LRCLIB's rate limit on shared Worker IPs.
+  const merged: TrackSummary[] = [];
+  for (const hint of attempts) {
+    merged.push(...(await searchOnce(db, hint)));
+    if (merged.some((track) => track.lyrics)) break;
+  }
   // The same song exists many times in LRCLIB; keep one entry per track+artist,
   // preferring the copy that actually carries lyrics.
   const usable = merged.filter((track) => Boolean(track.lyrics));
