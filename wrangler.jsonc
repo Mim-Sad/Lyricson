@@ -13,12 +13,14 @@
     "AI_BASE_URL": "https://openrouter.ai/api/v1",
     "AI_MODEL": "google/gemini-3.8-flash"
   },
-  // No database_id on purpose: Cloudflare creates the D1 database on the first
-  // deploy (automatic provisioning) and the Worker builds its own tables.
+  // The database was created by the first deploy (automatic provisioning). Its id
+  // is pinned here because re-deploys from git fail to re-attach it without one.
+  // Forking to another account? Delete database_id to have a new D1 created.
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "lyricson"
+      "database_name": "lyricson",
+      "database_id": "a2a59b9b-8f54-4968-950a-01dc4b248b7f"
     }
   ],
   // Self-healing tick: re-registers the webhook if it drifted and trims expired cache rows.
