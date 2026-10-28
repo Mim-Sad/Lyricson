@@ -1,6 +1,6 @@
 /** Thin Telegram Bot API client shared by /admin/setup and the admin panel. */
 import { webhookSecretFor, type Config, type Env } from '../env.js';
-import { saveSettings, readStoredSettings } from './settings.js';
+import { loadSettings, readStoredSettings, saveSettings } from './settings.js';
 import { sha256Hex } from './text.js';
 
 export interface TelegramEnvelope<T> {
@@ -36,8 +36,19 @@ export const BOT_COMMANDS = [
   { command: 'start', description: 'شروع و راهنمای ربات' },
   { command: 'help', description: 'راهنمای کامل' },
   { command: 'lang', description: 'تغییر زبان مقصد' },
-  { command: 'id', description: 'آیدی عددی تلگرام من' },
 ] as const;
+
+/** Shown only in the admin's own chat, so regular users never see it. */
+export async function setAdminCommands(cfg: Config, adminId: number): Promise<void> {
+  await telegramApi(cfg, 'setMyCommands', {
+    commands: [...BOT_COMMANDS, { command: 'admin', description: 'پنل مدیریت' }],
+    scope: { type: 'chat', chat_id: adminId },
+  });
+}
+
+export async function clearAdminCommands(cfg: Config, adminId: number): Promise<void> {
+  await telegramApi(cfg, 'deleteMyCommands', { scope: { type: 'chat', chat_id: adminId } });
+}
 
 export interface WebhookRegistration {
   webhookUrl: string;
@@ -88,7 +99,7 @@ export async function ensureWebhook(
 ): Promise<WebhookRegistration | null> {
   if (!cfg.botToken || !origin) return null;
   const fingerprint = await sha256Hex(
-    [cfg.botToken, origin, await webhookSecretFor(cfg), cfg.apiRoot ?? ''].join('|'),
+    [cfg.botToken, origin, await webhookSecretFor(cfg), cfg.apiRoot ?? '', JSON.stringify(BOT_COMMANDS)].join('|'),
   );
   if (!options.force) {
     const stored = await readStoredSettings(env);
@@ -97,6 +108,8 @@ export async function ensureWebhook(
   const registration = await registerBotWebhook(cfg, origin);
   if (registration.hook.ok) {
     await saveSettings(env, { webhook_state: fingerprint, public_url: origin });
+    const settings = await loadSettings(env, cfg, { fresh: true });
+    await Promise.all(settings.adminIds.map((id) => setAdminCommands(cfg, id)));
   }
   return registration;
 }

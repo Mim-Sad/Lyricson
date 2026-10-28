@@ -1,6 +1,7 @@
 /**
- * Second lyrics source (lyrics.ovh, free, no key). It only runs when LRCLIB
- * returned nothing usable, e.g. while LRCLIB answers 429 to shared Worker IPs.
+ * Backup lyrics sources, tried in order after LRCLIB: lyrics.ovh, then Lyrist
+ * (both free, no key). They run when LRCLIB returned nothing usable, e.g. while
+ * it answers 429 to shared Worker IPs.
  * lyrics.ovh has no lyrics-bearing search, so we ask its suggest endpoint for a
  * few candidates and fetch their lyrics one by one.
  */
@@ -10,6 +11,7 @@ import { normalize, type SearchHint } from './text.js';
 import type { TrackSummary } from './types.js';
 
 const BASE = 'https://api.lyrics.ovh';
+const LYRIST_BASE = 'https://lyrist.vercel.app/api';
 const TIMEOUT_MS = 8_000;
 const MAX_CANDIDATES = 3;
 
@@ -54,31 +56,57 @@ export async function fetchOvhLyrics(artist: string, title: string): Promise<str
   return lyrics.length > 20 ? lyrics : null;
 }
 
-export async function searchFallback(hints: SearchHint[]): Promise<TrackSummary[]> {
-  const hint = hints.find((entry) => entry.q && entry.q.length > 1);
-  if (!hint) return [];
+async function searchOvh(hint: SearchHint): Promise<TrackSummary[]> {
   const suggest = await getJson<SuggestResponse>(`${BASE}/suggest/${encodeURIComponent(hint.q)}`);
   const seen = new Set<string>();
-  const out: TrackSummary[] = [];
+  const picks: { trackName: string; artistName: string; albumName?: string; duration?: number }[] = [];
   for (const item of suggest?.data ?? []) {
     const trackName = (item.title_short ?? item.title ?? '').trim();
     const artistName = (item.artist?.name ?? '').trim();
     const key = `${normalize(trackName)}|${normalize(artistName)}`;
     if (!trackName || !artistName || seen.has(key)) continue;
     seen.add(key);
-    const lyrics = await fetchOvhLyrics(artistName, trackName);
-    if (!lyrics) continue;
-    out.push({
+    picks.push({
       trackName,
       artistName,
       ...(item.album?.title ? { albumName: item.album.title } : {}),
       ...(typeof item.duration === 'number' ? { duration: item.duration } : {}),
-      lyrics,
-      source: 'lyrics.ovh',
     });
-    if (out.length >= MAX_CANDIDATES) break;
+    if (picks.length >= MAX_CANDIDATES) break;
   }
-  return out;
+  const lyrics = await Promise.all(picks.map((pick) => fetchOvhLyrics(pick.artistName, pick.trackName)));
+  return picks.flatMap((pick, index): TrackSummary[] => {
+    const text = lyrics[index];
+    return text ? [{ ...pick, lyrics: text, source: 'lyrics.ovh' }] : [];
+  });
+}
+
+/** Lyrist: one request by "title/artist" when both are known, otherwise by the free-text query. */
+async function searchLyrist(hint: SearchHint): Promise<TrackSummary[]> {
+  const path =
+    hint.track && hint.artist
+      ? `${encodeURIComponent(hint.track)}/${encodeURIComponent(hint.artist)}`
+      : encodeURIComponent(hint.q);
+  const payload = await getJson<{ lyrics?: string; title?: string; artist?: string }>(`${LYRIST_BASE}/${path}`);
+  const lyrics = payload?.lyrics ? cleanOvhLyrics(payload.lyrics) : '';
+  const trackName = (payload?.title ?? hint.track ?? '').trim();
+  if (lyrics.length <= 20 || !trackName) return [];
+  return [
+    {
+      trackName,
+      artistName: (payload?.artist ?? hint.artist ?? 'Unknown artist').trim(),
+      lyrics,
+      source: 'lyrist',
+    },
+  ];
+}
+
+export async function searchFallback(hints: SearchHint[]): Promise<TrackSummary[]> {
+  const hint = hints.find((entry) => entry.q && entry.q.length > 1);
+  if (!hint) return [];
+  const fromOvh = await searchOvh(hint);
+  if (fromOvh.length > 0) return fromOvh;
+  return searchLyrist(hint);
 }
 
 export async function probeFallback(): Promise<{ ok: boolean; detail: string }> {

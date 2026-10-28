@@ -5,7 +5,8 @@
  * The schema is bootstrapped lazily from the Worker itself, so a fresh database
  * works on the very first request (migrations/0001_init.sql is the same DDL).
  */
-import type { Session, SessionPayload } from './types.js';
+import type { Translation } from './prompt.js';
+import type { Session, SessionPayload, TrackSummary } from './types.js';
 
 export type CacheTable = 'lyric_cache' | 'translation_cache';
 
@@ -46,6 +47,13 @@ const SCHEMA: string[] = [
      key TEXT PRIMARY KEY,
      value TEXT NOT NULL,
      updated_at INTEGER NOT NULL
+   )`,
+  `CREATE TABLE IF NOT EXISTS shares (
+     id TEXT PRIMARY KEY,
+     track TEXT NOT NULL,
+     translation TEXT,
+     language TEXT,
+     created_at INTEGER NOT NULL
    )`,
   `CREATE TABLE IF NOT EXISTS admin_state (
      user_id INTEGER PRIMARY KEY,
@@ -175,18 +183,19 @@ export async function pruneSessions(db: D1Database, olderThanSeconds = 60 * 60 *
  */
 export interface CachePolicy {
   enabled: boolean;
-  /** Lifetime of a finished translation. */
+  /** Lifetime of a finished translation in seconds; 0 = forever. */
   translationTtl: number;
-  /** Lifetime of a single LRCLIB track (search result lists keep their own, shorter TTL). */
+  /** Lifetime of looked-up lyrics and search results in seconds; 0 = forever. */
   lyricsTtl: number;
 }
 
 const DAY = 60 * 60 * 24;
 
+/** A TTL of 0 means "never expires" (the default: entries stay until an admin clears them). */
 export const cachePolicy: CachePolicy = {
   enabled: true,
-  translationTtl: 30 * DAY,
-  lyricsTtl: 7 * DAY,
+  translationTtl: 0,
+  lyricsTtl: 0,
 };
 
 export function applyCachePolicy(policy: CachePolicy): void {
@@ -200,9 +209,14 @@ export async function pruneCaches(db: D1Database): Promise<{ translations: numbe
   try {
     await ensureSchema(db);
     const now = nowSeconds();
+    const never = db.prepare('SELECT 0 WHERE 0');
     const [translations, lyrics] = await db.batch([
-      db.prepare('DELETE FROM translation_cache WHERE created_at < ?1').bind(now - cachePolicy.translationTtl),
-      db.prepare('DELETE FROM lyric_cache WHERE created_at < ?1').bind(now - Math.max(cachePolicy.lyricsTtl, 7 * DAY)),
+      cachePolicy.translationTtl > 0
+        ? db.prepare('DELETE FROM translation_cache WHERE created_at < ?1').bind(now - cachePolicy.translationTtl)
+        : never,
+      cachePolicy.lyricsTtl > 0
+        ? db.prepare('DELETE FROM lyric_cache WHERE created_at < ?1').bind(now - cachePolicy.lyricsTtl)
+        : never,
     ]);
     return {
       translations: translations?.meta?.changes ?? 0,
@@ -226,7 +240,7 @@ export async function cacheGet<T>(
       .bind(key)
       .first<{ payload: string; created_at: number }>();
     if (!row) return null;
-    if (nowSeconds() - row.created_at > ttlSeconds) return null;
+    if (ttlSeconds > 0 && nowSeconds() - row.created_at > ttlSeconds) return null;
     return JSON.parse(row.payload) as T;
   } catch {
     return null;
@@ -352,5 +366,60 @@ export async function quotaUsed(db: D1Database, userId: number): Promise<number>
     return row?.count ?? 0;
   } catch {
     return 0;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Shared pages (the links on the music card)
+// ---------------------------------------------------------------------------
+
+export interface ShareRecord {
+  id: string;
+  track: TrackSummary;
+  translation?: Translation;
+  language?: string;
+}
+
+/** Stores (or refreshes) the track and optionally its translation behind a short public id. */
+export async function saveShare(
+  db: D1Database,
+  id: string,
+  track: TrackSummary,
+  translation?: { value: Translation; language: string },
+): Promise<void> {
+  await ensureSchema(db);
+  await db
+    .prepare(
+      `INSERT INTO shares (id, track, translation, language, created_at) VALUES (?1, ?2, ?3, ?4, ?5)
+       ON CONFLICT(id) DO UPDATE SET track = excluded.track,
+         translation = COALESCE(excluded.translation, shares.translation),
+         language = COALESCE(excluded.language, shares.language)`,
+    )
+    .bind(
+      id,
+      JSON.stringify(track),
+      translation ? JSON.stringify(translation.value) : null,
+      translation?.language ?? null,
+      nowSeconds(),
+    )
+    .run();
+}
+
+export async function getShare(db: D1Database, id: string): Promise<ShareRecord | null> {
+  await ensureSchema(db);
+  const row = await db
+    .prepare('SELECT id, track, translation, language FROM shares WHERE id = ?1')
+    .bind(id)
+    .first<{ id: string; track: string; translation: string | null; language: string | null }>();
+  if (!row) return null;
+  try {
+    return {
+      id: row.id,
+      track: JSON.parse(row.track) as TrackSummary,
+      ...(row.translation ? { translation: JSON.parse(row.translation) as Translation } : {}),
+      ...(row.language ? { language: row.language } : {}),
+    };
+  } catch {
+    return null;
   }
 }

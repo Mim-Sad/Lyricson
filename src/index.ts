@@ -12,6 +12,8 @@ import { loadSettings } from './lib/settings.js';
 import { applyCachePolicy, ensureSchema, pruneCaches, pruneSessions } from './lib/store.js';
 import { BOT_COMMANDS, ensureWebhook, telegramApi } from './lib/telegram.js';
 import { landingPage, setupResultPage } from './ui/landing.js';
+import { lyricsPage } from './ui/lyrics-page.js';
+import { getShare } from './lib/store.js';
 
 type AppEnv = { Bindings: Env };
 
@@ -147,6 +149,24 @@ app.get('/', async (c) => {
     }),
   );
 });
+
+async function sharePage(c: Context<AppEnv>, mode: 'lyrics' | 'translation'): Promise<Response> {
+  const id = c.req.param('id') ?? '';
+  if (!/^[a-z0-9]{6,16}$/.test(id) || !c.env.DB) return c.text('not found', 404);
+  const share = await getShare(c.env.DB, id).catch(() => null);
+  if (!share) return c.text('not found', 404);
+  return c.html(
+    lyricsPage({
+      track: share.track,
+      ...(share.translation ? { translation: share.translation } : {}),
+      mode,
+      id,
+    }),
+  );
+}
+
+app.get('/l/:id', (c) => sharePage(c, 'lyrics'));
+app.get('/t/:id', (c) => sharePage(c, 'translation'));
 
 app.get('/health', async (c) => {
   const cfg = readConfig(c.env);

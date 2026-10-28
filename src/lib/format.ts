@@ -16,25 +16,44 @@ export function escapeHtml(input: string): string {
   return input.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-export function renderLyricsMessage(track: TrackSummary): string {
-  const header = [
-    `🎵 <b>${escapeHtml(track.trackName)}</b>`,
-    `🎤 ${escapeHtml(track.artistName)}${track.albumName ? ` · <i>${escapeHtml(track.albumName)}</i>` : ''}${
-      track.duration ? ` · ⏱ ${faDigits(clock(track.duration))}` : ''
-    }`,
-  ].join('\n');
-  const source =
-    track.source === 'user'
-      ? '📜 متن ارسالی خودت'
-      : `📚 منبع متن: ${track.source === 'lyrics.ovh' ? 'lyrics.ovh' : 'LRCLIB'}`;
-  const body = track.lyrics?.trim() ?? '';
-  return `${header}\n${source}\n\n${body}`;
+const RULE = '┄┄┄┄┄┄┄┄┄┄┄┄';
+
+const SOURCE_LABELS: Record<TrackSummary['source'], string> = {
+  lrclib: 'LRCLIB',
+  'lyrics.ovh': 'lyrics.ovh',
+  lyrist: 'Lyrist',
+  user: 'متن ارسالی خودت',
+};
+
+function trackHeader(track: TrackSummary, link?: string): string[] {
+  const title = `<b>${escapeHtml(track.trackName)}</b>`;
+  const meta = [
+    track.albumName ? `💿 ${escapeHtml(track.albumName)}` : '',
+    track.duration ? `⏱ ${faDigits(clock(track.duration))}` : '',
+  ].filter(Boolean);
+  return [
+    `🎵 ${link ? `<a href="${escapeHtml(link).replace(/"/g, '&quot;')}">${title}</a>` : title}`,
+    `🎤 ${escapeHtml(track.artistName)}`,
+    ...(meta.length > 0 ? [meta.join('  ·  ')] : []),
+  ];
+}
+
+function sourceFooter(track: TrackSummary): string {
+  return track.source === 'user'
+    ? '📜 <i>متن ارسالی خودت</i>'
+    : `📚 <i>منبع متن: ${SOURCE_LABELS[track.source]}</i>`;
+}
+
+export function renderLyricsMessage(track: TrackSummary, link?: string): string {
+  const body = escapeHtml(track.lyrics?.trim() ?? '');
+  return [...trackHeader(track, link), RULE, '', body, '', RULE, sourceFooter(track)].join('\n');
 }
 
 export function renderTranslationMessage(
-  track: Pick<TrackSummary, 'trackName'>,
+  track: TrackSummary,
   translation: Translation,
   languageName: string,
+  link?: string,
   themeLabel = 'مفهوم کلی',
   moodLabel = 'حال‌و‌هوا',
 ): string {
@@ -47,12 +66,12 @@ export function renderTranslationMessage(
     return `${source}\n${escapeHtml(line.text)}${note}`;
   });
 
-  const head = [`🇮🇷 <b>ترجمهٔ ${escapeHtml(languageName)}</b> — ${escapeHtml(track.trackName)}`];
+  const head = [`🇮🇷 <b>ترجمهٔ ${escapeHtml(languageName)}</b>`, ...trackHeader(track, link), RULE];
   if (translation.theme) head.push(`🧠 <b>${themeLabel}:</b> ${escapeHtml(translation.theme)}`);
   if (translation.mood) head.push(`💫 <b>${moodLabel}:</b> ${escapeHtml(translation.mood)}`);
-  head.push('➖➖➖➖➖➖➖➖');
+  if (translation.theme || translation.mood) head.push(RULE);
 
-  return `${head.join('\n')}\n${blocks.join('\n\n')}`;
+  return `${head.join('\n')}\n\n${blocks.join('\n\n')}\n\n${RULE}\n${sourceFooter(track)}`;
 }
 
 function lastBreak(text: string, limit: number): number {
@@ -70,7 +89,7 @@ export function splitMessage(text: string, limit = SAFE_LIMIT): string[] {
   if (trimmed.length <= limit) return [trimmed];
 
   // Room for the "part 1 of 3" label that gets prepended to every chunk.
-  const budget = Math.max(240, limit - 48);
+  const budget = Math.max(240, limit - 80);
   const chunks: string[] = [];
   let current = '';
   const flush = () => {
@@ -98,7 +117,7 @@ export function splitMessage(text: string, limit = SAFE_LIMIT): string[] {
   flush();
 
   if (chunks.length <= 1) return chunks;
-  return chunks.map((chunk, index) => `<b>بخش ${faDigits(index + 1)} از ${faDigits(chunks.length)}</b>\n${chunk}`);
+  return chunks.map((chunk, index) => `📄 <b>بخش ${faDigits(index + 1)} از ${faDigits(chunks.length)}</b>\n${RULE}\n${chunk}`);
 }
 
 export function renderCandidatesMessage(
@@ -134,30 +153,45 @@ export function candidateKeyboard(
   return keyboard;
 }
 
+/** Telegram's coloured buttons (Bot API 9.4+); older clients simply ignore the field. */
+export function styled(keyboard: InlineKeyboard, style: 'primary' | 'success' | 'danger'): InlineKeyboard {
+  const rowsList = keyboard.inline_keyboard as unknown as { style?: string }[][];
+  const last = rowsList[rowsList.length - 1]?.at(-1);
+  if (last) last.style = style;
+  return keyboard;
+}
+
 export function lyricsKeyboard(
   sessionId: string,
   options: { languageName: string; searchSessionId?: string },
 ): InlineKeyboard {
-  const keyboard = new InlineKeyboard().text(
-    `🇮🇷 ترجمهٔ خط‌به‌خط (${options.languageName})`,
-    `t:${sessionId}:0`,
+  const keyboard = styled(
+    new InlineKeyboard().text(`🇮🇷 ترجمهٔ خط‌به‌خط · ${options.languageName}`, `t:${sessionId}:0`),
+    'primary',
   );
+  keyboard
+    .row()
+    .text('🖼 کارت موزیک', `c:${sessionId}:0`)
+    .text('📖 داستان موزیک', `b:${sessionId}:0`)
+    .row()
+    .text('🎓 کلمات کلیدی', `w:${sessionId}:0`)
+    .text('👤 دربارهٔ هنرمند', `r:${sessionId}:0`);
   if (options.searchSessionId) {
-    keyboard.row().text('🔁 نتایج نزدیک', `p:${options.searchSessionId}:0`);
+    keyboard.row().text('🔁 نتایج دیگر', `p:${options.searchSessionId}:0`);
   }
   return keyboard;
 }
 
 export interface CallbackData {
-  action: 's' | 't' | 'p';
+  action: 's' | 't' | 'p' | 'c' | 'b' | 'w' | 'r';
   sessionId: string;
   index: number;
 }
 
 export function parseCallbackData(data: string): CallbackData | null {
-  const match = /^([stp]):([a-z0-9]{4,16}):(\d{1,4})$/.exec(data);
+  const match = /^([stpcbwr]):([a-z0-9]{4,16}):(\d{1,4})$/.exec(data);
   if (!match) return null;
-  const action = match[1] as 's' | 't' | 'p';
+  const action = match[1] as CallbackData['action'];
   return { action, sessionId: match[2] ?? '', index: Number.parseInt(match[3] ?? '0', 10) };
 }
 
