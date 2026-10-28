@@ -10,7 +10,12 @@ import type { TrackSummary } from './types.js';
 
 export const TELEGRAM_LIMIT = 4096;
 export const SAFE_LIMIT = 3800;
-const QUOTE_UPTO_LINES = 40;
+/** Telegram renders at most 100 formatting entities per message; stay below it. */
+const MAX_ENTITIES = 90;
+
+function countEntities(html: string): number {
+  return (html.match(/<(?!\/)[a-z]/gi) ?? []).length;
+}
 
 export function escapeHtml(input: string): string {
   return latinDigits(input).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -102,15 +107,19 @@ export function paginate(doc: Doc, options: { plainBlocks?: boolean; limit?: num
   const groups: string[][] = [];
   let current: string[] = [];
   let size = 0;
+  let entities = countEntities(doc.head) + countEntities(doc.foot) + 1;
   for (const block of blocks) {
     const extra = block.length + 2;
-    if (current.length > 0 && size + extra > budget) {
+    const blockEntities = countEntities(block);
+    if (current.length > 0 && (size + extra > budget || entities + blockEntities > MAX_ENTITIES)) {
       groups.push(current);
       current = [];
       size = 0;
+      entities = countEntities(doc.foot) + 1;
     }
     current.push(block);
     size += extra;
+    entities += blockEntities;
   }
   if (current.length > 0) groups.push(current);
   if (groups.length === 0) groups.push([]);
@@ -149,11 +158,9 @@ export function translationDoc(
   themeLabel = 'مفهوم کلی',
   moodLabel = 'حال‌و‌هوا',
 ): Doc {
-  const quote = translation.lines.length <= QUOTE_UPTO_LINES;
+  // The original line is always a quote; pagination keeps each message under Telegram's entity limit.
   const blocks = translation.lines.map((line) => {
-    const source = quote
-      ? `<blockquote>${escapeHtml(line.source)}</blockquote>`
-      : `<i>${escapeHtml(line.source)}</i>`;
+    const source = `<blockquote>${escapeHtml(line.source)}</blockquote>`;
     const note = line.note ? ` <i>(${escapeHtml(stripParentheses(line.note))})</i>` : '';
     return `${source}\n${escapeHtml(line.text)}${note}`;
   });
