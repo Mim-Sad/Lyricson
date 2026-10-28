@@ -2,7 +2,9 @@ import type { InlineKeyboard } from 'grammy';
 import { describe, expect, it } from 'vitest';
 import {
   candidateKeyboard,
+  artistHashtags,
   escapeHtml,
+  hashtag,
   lyricsKeyboard,
   parseCallbackData,
   renderCandidatesMessage,
@@ -47,6 +49,21 @@ const TRANSLATION: Translation = {
 describe('escapeHtml', () => {
   it('escapes markup inside lyrics', () => {
     expect(escapeHtml('<b> & </b>')).toBe('&lt;b&gt; &amp; &lt;/b&gt;');
+  });
+});
+
+describe('hashtags', () => {
+  it('turns artists into filterable hashtags', () => {
+    expect(hashtag('twenty one pilots')).toBe('#twenty_one_pilots');
+    expect(hashtag('AC/DC')).toBe('#AC_DC');
+    expect(hashtag('!!!')).toBe('');
+    expect(artistHashtags('Drake feat. Rihanna & Kanye West')).toBe('#Drake #Rihanna #Kanye_West');
+  });
+
+  it('puts the artist hashtag and the source footer in the lyrics message', () => {
+    const text = renderLyricsMessage({ ...TRACK, artistName: 'twenty one pilots', source: 'lyrics.ovh' });
+    expect(text).toContain('#twenty_one_pilots');
+    expect(text.trim().endsWith('lyrics.ovh</i>')).toBe(true);
   });
 });
 
@@ -97,7 +114,7 @@ describe('splitMessage', () => {
     const chunks = splitMessage(long, 1000);
     expect(chunks.length).toBeGreaterThan(1);
     for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(1000);
-    expect(chunks[0]).toMatch(/^<b>بخش ۱ از /);
+    expect(chunks[0]).toMatch(/بخش ۱ از /);
   });
 });
 

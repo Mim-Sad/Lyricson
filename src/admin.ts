@@ -31,7 +31,13 @@ import {
   pruneCaches,
   setAdminState,
 } from './lib/store.js';
-import { getWebhookInfo, registerBotWebhook, telegramApi } from './lib/telegram.js';
+import {
+  clearAdminCommands,
+  getWebhookInfo,
+  registerBotWebhook,
+  setAdminCommands,
+  telegramApi,
+} from './lib/telegram.js';
 import { probeFallback } from './lib/fallback-lyrics.js';
 import { probeLrclib } from './lib/lyrics.js';
 import { faDigits } from './lib/text.js';
@@ -301,6 +307,7 @@ export async function handleAdminCallback(
         return true;
       }
       await removeAdminId(env, action.id);
+      await clearAdminCommands(cfg, action.id);
       await refresh(ctx, env, cfg, 'admins', `🗑 ادمین <code>${action.id}</code> حذف شد.`);
       return true;
     }
@@ -433,6 +440,7 @@ export async function handleAdminText(
         return true;
       }
       await addAdminId(env, id);
+      await setAdminCommands(cfg, id);
       await refresh(ctx, env, cfg, 'admins', `✅ ادمین <code>${id}</code> اضافه شد.`);
       return true;
     }
@@ -440,12 +448,18 @@ export async function handleAdminText(
     case 'cache_translation_days':
     case 'cache_lyrics_days': {
       const days = Number.parseInt(value, 10);
-      if (!/^\d+$/.test(value) || days < 1 || days > 365) {
-        await ctx.reply('⛔️ یک عدد بین ۱ تا ۳۶۵ بفرست.', HTML);
+      if (!/^\d+$/.test(value) || days > 365) {
+        await ctx.reply('⛔️ یک عدد بین ۱ تا ۳۶۵ بفرست (۰ = بی‌نهایت).', HTML);
         return true;
       }
-      await saveSetting(env, field, String(days));
-      await refresh(ctx, env, cfg, 'cache', `✅ ماندگاری: <b>${faDigits(days)}</b> روز`);
+      await saveSetting(env, field, days > 0 ? String(days) : null);
+      await refresh(
+        ctx,
+        env,
+        cfg,
+        'cache',
+        days > 0 ? `✅ ماندگاری: <b>${faDigits(days)}</b> روز` : '✅ ماندگاری: <b>بی‌نهایت</b>',
+      );
       return true;
     }
 

@@ -40,8 +40,9 @@ export const SETTING_KEYS: readonly SettingKey[] = [
   'webhook_state',
 ];
 
-export const DEFAULT_CACHE_TRANSLATION_DAYS = 30;
-export const DEFAULT_CACHE_LYRICS_DAYS = 7;
+/** 0 = never expires. */
+export const DEFAULT_CACHE_TRANSLATION_DAYS = 0;
+export const DEFAULT_CACHE_LYRICS_DAYS = 0;
 
 
 export type StoredSettings = Partial<Record<SettingKey, string>>;

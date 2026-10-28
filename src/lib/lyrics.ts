@@ -10,7 +10,6 @@ import { normalize, type SearchHint } from './text.js';
 import type { TrackSummary } from './types.js';
 
 const LRCLIB_BASE = 'https://lrclib.net/api';
-const SEARCH_TTL = 60 * 60 * 24;
 const REQUEST_TIMEOUT_MS = 12_000;
 
 interface RawTrack {
@@ -44,7 +43,7 @@ async function lrclibFetch<T>(path: string): Promise<T | null> {
   // Just throttled: do not hammer LRCLIB again for a minute, the fallback source takes over.
   if (lrclibWasThrottled(60_000)) return null;
   // Workers share egress IPs, so LRCLIB sometimes answers 429; wait and retry.
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const response = await fetch(`${LRCLIB_BASE}${path}`, {
         headers: LRCLIB_HEADERS,
@@ -54,8 +53,8 @@ async function lrclibFetch<T>(path: string): Promise<T | null> {
       if (response.status === 429 || response.status >= 500) {
         if (response.status === 429) throttledAt = Date.now();
         const retryAfter = Number.parseFloat(response.headers.get('retry-after') ?? '');
-        const wait = Number.isFinite(retryAfter) ? Math.min(retryAfter * 1000, 2500) : 600 * (attempt + 1);
-        if (attempt < 2) {
+        const wait = Number.isFinite(retryAfter) ? Math.min(retryAfter * 1000, 1500) : 350;
+        if (attempt < 1) {
           await sleep(wait);
           continue;
         }
@@ -131,7 +130,7 @@ function cacheKeyForHint(hint: SearchHint): string {
 
 async function searchOnce(db: D1Database, hint: SearchHint): Promise<TrackSummary[]> {
   const key = cacheKeyForHint(hint);
-  const cached = await cacheGet<TrackSummary[]>(db, 'lyric_cache', key, SEARCH_TTL);
+  const cached = await cacheGet<TrackSummary[]>(db, 'lyric_cache', key, cachePolicy.lyricsTtl);
   if (cached) return cached;
 
   const params = new URLSearchParams();
@@ -163,20 +162,37 @@ async function searchOnce(db: D1Database, hint: SearchHint): Promise<TrackSummar
 export async function searchTracks(db: D1Database, hints: SearchHint[], limit = 12): Promise<TrackSummary[]> {
   const attempts = hints.slice(0, 3);
   if (attempts.length === 0) return [];
-  // One at a time and only until something usable turns up: three parallel
-  // requests are what trips LRCLIB's rate limit on shared Worker IPs.
-  const merged: TrackSummary[] = [];
-  for (const hint of attempts) {
-    merged.push(...(await searchOnce(db, hint)));
-    if (merged.some((track) => track.lyrics)) break;
-  }
-  // LRCLIB empty or throttled: ask the second source before giving up.
-  if (!merged.some((track) => track.lyrics)) merged.push(...(await searchFallback(attempts)));
-  // The same song exists many times in LRCLIB; keep one entry per track+artist,
-  // preferring the copy that actually carries lyrics.
-  const usable = merged.filter((track) => Boolean(track.lyrics));
-  const unusable = merged.filter((track) => !track.lyrics);
-  return dedupeTracks([...usable, ...unusable]).slice(0, limit);
+  const usable = (list: TrackSummary[]) => list.some((track) => Boolean(track.lyrics));
+
+  // LRCLIB, one request at a time: parallel requests are what trips its rate limit.
+  const primary = (async () => {
+    const merged: TrackSummary[] = [];
+    for (const hint of attempts) {
+      merged.push(...(await searchOnce(db, hint)));
+      if (usable(merged)) break;
+    }
+    return merged;
+  })();
+
+  // Backup sources start right away when LRCLIB was throttled a moment ago,
+  // otherwise after a short grace period; whoever has lyrics first wins.
+  const backup = (async () => {
+    if (!lrclibWasThrottled(60_000)) await sleep(900);
+    return searchFallback(attempts);
+  })();
+
+  const merged = await Promise.race([
+    primary.then((list) => (usable(list) ? list : backup.then((extra) => [...list, ...extra]))),
+    backup.then((list) => (usable(list) ? list : primary.then((first) => [...first, ...list]))),
+  ]);
+  // Don't leave the loser running unobserved.
+  void primary.catch(() => undefined);
+  void backup.catch(() => undefined);
+
+  const withLyrics = merged.filter((track) => Boolean(track.lyrics));
+  const without = merged.filter((track) => !track.lyrics);
+  // The same song exists many times; keep one entry per track+artist, preferring the copy with lyrics.
+  return dedupeTracks([...withLyrics, ...without]).slice(0, limit);
 }
 
 /** Collapses uploads of the same song into a single candidate. */

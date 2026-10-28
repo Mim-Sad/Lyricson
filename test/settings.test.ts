@@ -137,15 +137,15 @@ describe('admins, cache policy and maintenance', () => {
     expect(snapshot.storedAdminIds).toEqual([222, 333]);
   });
 
-  it('has cache on with sane lifetimes unless the panel changes them', () => {
+  it('keeps cache on and forever unless the panel changes them', () => {
     const cfg = makeConfig();
-    expect(mergeSettings(cfg, {}).cache).toEqual({ enabled: true, translationDays: 30, lyricsDays: 7 });
+    expect(mergeSettings(cfg, {}).cache).toEqual({ enabled: true, translationDays: 0, lyricsDays: 0 });
     const custom = mergeSettings(cfg, {
       cache_enabled: 'off',
       cache_translation_days: '3',
       cache_lyrics_days: 'oops',
     });
-    expect(custom.cache).toEqual({ enabled: false, translationDays: 3, lyricsDays: 7 });
+    expect(custom.cache).toEqual({ enabled: false, translationDays: 3, lyricsDays: 0 });
     expect(custom.fromDb).toEqual(expect.arrayContaining(['cache_enabled', 'cache_translation_days']));
   });
 

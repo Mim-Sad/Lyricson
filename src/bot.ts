@@ -10,6 +10,7 @@ import type { Config, Env } from './env.js';
 import { describeAiError, translateTrack } from './lib/ai.js';
 import { isAdmin } from './lib/admin-panel.js';
 import { addAdminId, loadSettings } from './lib/settings.js';
+import { setAdminCommands } from './lib/telegram.js';
 import { isUserFacing, logError } from './lib/errors.js';
 import {
   candidateKeyboard,
@@ -50,6 +51,8 @@ const HTML = { parse_mode: 'HTML', link_preview_options: { is_disabled: true } }
 type BotContext = Context;
 
 interface RequestInput {
+  /** A "searching…" message already on screen; the answer replaces it in place. */
+  statusId?: number;
   query?: string;
   title?: string;
   artist?: string;
@@ -58,6 +61,7 @@ interface RequestInput {
 }
 
 interface TrackOptions {
+  statusId?: number;
   candidates?: TrackSummary[];
   searchSessionId?: string;
   notice?: string;
@@ -119,6 +123,7 @@ export function createBot(env: Env, cfg: Config, botInfo?: UserFromGetMe): Bot {
       return;
     }
     await addAdminId(env, userId);
+    await setAdminCommands(cfg, userId);
     cfg.adminUserIds = [...new Set([...cfg.adminUserIds, userId])];
     await ctx.reply(M.claimDone(userId), {
       ...HTML,
@@ -156,7 +161,7 @@ export function createBot(env: Env, cfg: Config, botInfo?: UserFromGetMe): Bot {
   bot.on('message:text', async (ctx) => {
     const text = ctx.message.text.trim();
     if (text.startsWith('/')) {
-      await ctx.reply('این دستور رو نمی‌شناسم 🤔\nدستورها: /start · /help · /lang · /id', HTML);
+      await ctx.reply('این دستور رو نمی‌شناسم 🤔\nدستورها: /start · /help · /lang', HTML);
       return;
     }
     // A pending admin prompt takes the next plain message as its value.
@@ -242,15 +247,16 @@ async function routeText(ctx: BotContext, env: Env, cfg: Config, text: string): 
       await ctx.reply(M.searchedFailed(), HTML);
       return;
     }
-    await ctx.reply(M.SEARCHING_FOR_LINK, HTML).catch(() => undefined);
+    const statusId = await sendStatus(ctx, M.SEARCHING_FOR_LINK);
     const info = await resolveLink(url);
     const leftover = text.replace(url, ' ').replace(/\s{2,}/g, ' ').trim();
     const query = [info.artist, info.title].filter(Boolean).join(' ') || leftover;
     if (!query) {
-      await ctx.reply(M.notFound(url), HTML);
+      await settle(ctx, statusId, M.notFound(url));
       return;
     }
     await handleRequest(ctx, env, cfg, {
+      ...(statusId ? { statusId } : {}),
       query,
       ...(info.title ? { title: info.title } : {}),
       ...(info.artist ? { artist: info.artist } : {}),
@@ -363,11 +369,12 @@ async function handleRequest(ctx: BotContext, env: Env, cfg: Config, input: Requ
   const hints = buildSearchHints({ ...(input.query ? { query: input.query } : {}), ...(input.title ? { title: input.title } : {}), ...(input.artist ? { artist: input.artist } : {}) });
   const displayQuery = input.query ?? [input.artist, input.title].filter(Boolean).join(' ');
   if (hints.length === 0) {
-    await ctx.reply(M.notFound(displayQuery || '—'), HTML);
+    await settle(ctx, input.statusId, M.notFound(displayQuery || '—'));
     return;
   }
 
-  await ctx.replyWithChatAction('typing').catch(() => undefined);
+  // Answer instantly; the real result edits this message when it is ready.
+  const statusId = input.statusId ?? (await sendStatus(ctx, M.SEARCHING));
 
   // Exact lookup first: when we already know artist and title it is a single
   // fast request and usually the right answer.
@@ -375,7 +382,7 @@ async function handleRequest(ctx: BotContext, env: Env, cfg: Config, input: Requ
   if (best?.track && best.artist) {
     const exact = await getTrackByMetadata(env.DB, { track: best.track, artist: best.artist });
     if (exact?.lyrics && decideMatch(hints, [exact]).confident) {
-      await sendTrack(ctx, env, cfg, exact, { candidates: [exact] });
+      await sendTrack(ctx, env, cfg, exact, { candidates: [exact], ...(statusId ? { statusId } : {}) });
       return;
     }
   }
@@ -384,22 +391,27 @@ async function handleRequest(ctx: BotContext, env: Env, cfg: Config, input: Requ
   const ranked = sortRanked(hints, found).filter((track) => Boolean(track.lyrics));
   if (ranked.length === 0) {
     if (found.length === 0 && lrclibWasThrottled()) {
-      await ctx.reply(M.LYRICS_BUSY, HTML);
+      await settle(ctx, statusId, M.LYRICS_BUSY);
       return;
     }
     const anyTrack = found[0];
-    await ctx.reply(anyTrack ? M.noLyricsFound(anyTrack) : M.notFound(displayQuery || '—'), HTML);
+    await settle(ctx, statusId, anyTrack ? M.noLyricsFound(anyTrack) : M.notFound(displayQuery || '—'));
     return;
   }
 
   const decision = decideMatch(hints, ranked);
   const top = ranked[0];
   if (decision.confident && top) {
-    await sendTrack(ctx, env, cfg, top, { candidates: ranked });
+    await sendTrack(ctx, env, cfg, top, { candidates: ranked, ...(statusId ? { statusId } : {}) });
     return;
   }
 
-  await showCandidates(ctx, env, cfg, { candidates: ranked, query: displayQuery, page: 0 });
+  await showCandidates(ctx, env, cfg, {
+    candidates: ranked,
+    query: displayQuery,
+    page: 0,
+    ...(statusId ? { statusId } : {}),
+  });
 }
 
 async function sendTrack(
@@ -441,18 +453,16 @@ async function sendTrack(
   let lastMessageId: number | undefined;
   for (const [index, chunk] of chunks.entries()) {
     const isLast = index === chunks.length - 1;
-    const sent = await ctx.reply(chunk, {
-      ...HTML,
-      ...(isLast
-        ? {
-            reply_markup: lyricsKeyboard(sessionId, {
-              languageName: language.nativeName,
-              ...(searchSessionId ? { searchSessionId } : {}),
-            }),
-          }
-        : {}),
-    });
-    lastMessageId = sent.message_id;
+    const extra = isLast
+      ? {
+          reply_markup: lyricsKeyboard(sessionId, {
+            languageName: language.nativeName,
+            ...(searchSessionId ? { searchSessionId } : {}),
+          }),
+        }
+      : {};
+    // The first chunk replaces the "searching…" message; the rest follow as new messages.
+    lastMessageId = await settle(ctx, index === 0 ? options.statusId : undefined, chunk, extra);
   }
   if (lastMessageId !== undefined) await setSessionMessageId(env.DB, sessionId, lastMessageId);
 }
@@ -461,7 +471,14 @@ async function showCandidates(
   ctx: BotContext,
   env: Env,
   cfg: Config,
-  args: { candidates: TrackSummary[]; query: string; page: number; sessionId?: string; edit?: boolean },
+  args: {
+    candidates: TrackSummary[];
+    query: string;
+    page: number;
+    sessionId?: string;
+    edit?: boolean;
+    statusId?: number;
+  },
 ): Promise<string | undefined> {
   const chatId = chatIdOf(ctx);
   const userId = userIdOf(ctx);
@@ -492,8 +509,8 @@ async function showCandidates(
       await setSessionMessageId(env.DB, sessionId, sent.message_id);
     }
   } else {
-    const sent = await ctx.reply(text, options);
-    await setSessionMessageId(env.DB, sessionId, sent.message_id);
+    const messageId = await settle(ctx, args.statusId, text, { reply_markup: options.reply_markup });
+    await setSessionMessageId(env.DB, sessionId, messageId);
   }
   return sessionId;
 }
@@ -513,16 +530,17 @@ async function onSelectCandidate(
   }
   await ctx.answerCallbackQuery();
 
+  const statusId = chosen.lyrics ? undefined : await sendStatus(ctx, M.SEARCHING);
   const track = chosen.lyrics
     ? chosen
     : chosen.id
       ? await getTrackById(env.DB, chosen.id)
       : null;
   if (!track?.lyrics) {
-    await ctx.reply(M.noLyricsFound(chosen), HTML);
+    await settle(ctx, statusId, M.noLyricsFound(chosen));
     return;
   }
-  await sendTrack(ctx, env, cfg, track, { searchSessionId: session.id });
+  await sendTrack(ctx, env, cfg, track, { searchSessionId: session.id, ...(statusId ? { statusId } : {}) });
 }
 
 async function onShowPage(ctx: BotContext, env: Env, cfg: Config, session: Session, page: number): Promise<void> {
@@ -645,6 +663,39 @@ async function sendLanguageMenu(ctx: BotContext, env: Env, cfg: Config, edit: bo
 
 function userIdOf(ctx: BotContext): number {
   return ctx.from?.id ?? 0;
+}
+
+/**
+ * Answers by editing the "searching…" message when there is one (so the user
+ * saw a reply instantly), otherwise sends a fresh message. Returns the id of
+ * the message that now holds `text`.
+ */
+async function settle(
+  ctx: BotContext,
+  statusId: number | undefined,
+  text: string,
+  extra: { reply_markup?: InlineKeyboard } = {},
+): Promise<number> {
+  const chatId = chatIdOf(ctx);
+  if (statusId && chatId) {
+    try {
+      await ctx.api.editMessageText(chatId, statusId, text, { ...HTML, ...extra });
+      return statusId;
+    } catch (error) {
+      if (error instanceof Error && /message is not modified/i.test(error.message)) return statusId;
+      logError('settle', error);
+    }
+  }
+  const sent = await ctx.reply(text, { ...HTML, ...extra });
+  return sent.message_id;
+}
+
+async function sendStatus(ctx: BotContext, text: string): Promise<number | undefined> {
+  try {
+    return (await ctx.reply(text, HTML)).message_id;
+  } catch {
+    return undefined;
+  }
 }
 
 function chatIdOf(ctx: BotContext): number | null {

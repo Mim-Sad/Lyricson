@@ -175,18 +175,19 @@ export async function pruneSessions(db: D1Database, olderThanSeconds = 60 * 60 *
  */
 export interface CachePolicy {
   enabled: boolean;
-  /** Lifetime of a finished translation. */
+  /** Lifetime of a finished translation in seconds; 0 = forever. */
   translationTtl: number;
-  /** Lifetime of a single LRCLIB track (search result lists keep their own, shorter TTL). */
+  /** Lifetime of looked-up lyrics and search results in seconds; 0 = forever. */
   lyricsTtl: number;
 }
 
 const DAY = 60 * 60 * 24;
 
+/** A TTL of 0 means "never expires" (the default: entries stay until an admin clears them). */
 export const cachePolicy: CachePolicy = {
   enabled: true,
-  translationTtl: 30 * DAY,
-  lyricsTtl: 7 * DAY,
+  translationTtl: 0,
+  lyricsTtl: 0,
 };
 
 export function applyCachePolicy(policy: CachePolicy): void {
@@ -200,9 +201,14 @@ export async function pruneCaches(db: D1Database): Promise<{ translations: numbe
   try {
     await ensureSchema(db);
     const now = nowSeconds();
+    const never = db.prepare('SELECT 0 WHERE 0');
     const [translations, lyrics] = await db.batch([
-      db.prepare('DELETE FROM translation_cache WHERE created_at < ?1').bind(now - cachePolicy.translationTtl),
-      db.prepare('DELETE FROM lyric_cache WHERE created_at < ?1').bind(now - Math.max(cachePolicy.lyricsTtl, 7 * DAY)),
+      cachePolicy.translationTtl > 0
+        ? db.prepare('DELETE FROM translation_cache WHERE created_at < ?1').bind(now - cachePolicy.translationTtl)
+        : never,
+      cachePolicy.lyricsTtl > 0
+        ? db.prepare('DELETE FROM lyric_cache WHERE created_at < ?1').bind(now - cachePolicy.lyricsTtl)
+        : never,
     ]);
     return {
       translations: translations?.meta?.changes ?? 0,
@@ -226,7 +232,7 @@ export async function cacheGet<T>(
       .bind(key)
       .first<{ payload: string; created_at: number }>();
     if (!row) return null;
-    if (nowSeconds() - row.created_at > ttlSeconds) return null;
+    if (ttlSeconds > 0 && nowSeconds() - row.created_at > ttlSeconds) return null;
     return JSON.parse(row.payload) as T;
   } catch {
     return null;
