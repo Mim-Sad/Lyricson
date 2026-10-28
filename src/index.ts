@@ -134,7 +134,10 @@ app.get('/', async (c) => {
   const settings = await loadSettings(c.env, cfg).catch(() => null);
   return c.html(
     landingPage({
-      checks: setupChecks(c.env, cfg),
+      checks: setupChecks(c.env, cfg, {
+        hasAiKey: Boolean(settings?.ai.apiKey ?? cfg.ai.apiKey),
+        adminCount: settings?.adminIds.length ?? cfg.adminUserIds.length,
+      }),
       model: settings?.ai.model ?? cfg.ai.model,
       baseUrl: settings?.ai.baseUrl ?? cfg.ai.baseUrl,
       dailyLimit: settings?.dailyLimit ?? cfg.dailyLimit,

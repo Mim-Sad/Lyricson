@@ -378,7 +378,7 @@ export async function testAiConnection(
       body: JSON.stringify({
         model: ai.model,
         temperature: 0,
-        max_tokens: 8,
+        max_tokens: 64,
         messages: [{ role: 'user', content: 'Reply with the single word: OK' }],
       }),
       signal: AbortSignal.timeout(20_000),
@@ -395,11 +395,14 @@ export async function testAiConnection(
     }
     const payload = (await response.json()) as ChatResponse;
     const content = contentFromChat(payload);
+    // Reasoning models may spend the whole small budget thinking and return no
+    // text; a well-formed 200 reply still proves key, URL and model are valid.
+    const connected = Boolean(content) || Array.isArray(payload.choices);
     return {
-      ok: Boolean(content),
+      ok: connected,
       latencyMs,
       model: ai.model,
-      detail: content ? content.slice(0, 120) : 'پاسخ خالی بود',
+      detail: content ? content.slice(0, 120) : 'اتصال برقرار است (مدل متنی برنگرداند)',
     };
   } catch (error) {
     return {
