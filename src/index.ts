@@ -6,11 +6,11 @@ import { Hono, type Context } from 'hono';
 import type { Bot } from 'grammy';
 import type { UserFromGetMe } from 'grammy/types';
 import { createBot } from './bot.js';
-import { readConfig, setupChecks, type Config, type Env } from './env.js';
+import { readConfig, setupChecks, webhookSecretFor, type Config, type Env } from './env.js';
 import { logError } from './lib/errors.js';
 import { loadSettings } from './lib/settings.js';
-import { ensureSchema } from './lib/store.js';
-import { BOT_COMMANDS, telegramApi } from './lib/telegram.js';
+import { applyCachePolicy, ensureSchema, pruneCaches, pruneSessions } from './lib/store.js';
+import { BOT_COMMANDS, ensureWebhook, telegramApi } from './lib/telegram.js';
 import { landingPage, setupResultPage } from './ui/landing.js';
 
 type AppEnv = { Bindings: Env };
@@ -58,7 +58,8 @@ function botUsername(): string | undefined {
 async function webhook(c: Context<AppEnv>): Promise<Response> {
   const cfg = readConfig(c.env);
   const provided = c.req.header('x-telegram-bot-api-secret-token') ?? c.req.param('secret') ?? '';
-  if (cfg.webhookSecret && provided !== cfg.webhookSecret) {
+  const expected = await webhookSecretFor(cfg);
+  if (expected && provided !== expected) {
     return c.json({ ok: false, error: 'forbidden' }, 403);
   }
   if (!cfg.botToken) {
@@ -110,8 +111,25 @@ async function databaseStatus(env: Env): Promise<{ ready: boolean; error?: strin
   }
 }
 
+/**
+ * Zero-config setup: the first visit to the Worker URL registers the Telegram
+ * webhook (and the commands) for that origin; later visits are a cheap no-op.
+ * An address chosen in the admin panel wins over the visited origin.
+ */
+async function autoSetup(c: Context<AppEnv>, cfg: Config): Promise<void> {
+  if (!cfg.botToken || !c.env.DB) return;
+  try {
+    await ensureSchema(c.env.DB);
+    const settings = await loadSettings(c.env, cfg);
+    await ensureWebhook(c.env, cfg, settings.publicUrl ?? new URL(c.req.url).origin);
+  } catch (error) {
+    logError('autosetup', error);
+  }
+}
+
 app.get('/', async (c) => {
   const cfg = readConfig(c.env);
+  await autoSetup(c, cfg);
   const database = await databaseStatus(c.env);
   const settings = await loadSettings(c.env, cfg).catch(() => null);
   return c.html(
@@ -129,6 +147,7 @@ app.get('/', async (c) => {
 
 app.get('/health', async (c) => {
   const cfg = readConfig(c.env);
+  await autoSetup(c, cfg);
   const database = await databaseStatus(c.env);
   const settings = await loadSettings(c.env, cfg).catch(() => null);
   const ai = settings?.ai ?? cfg.ai;
@@ -138,8 +157,8 @@ app.get('/health', async (c) => {
     database: database.ready,
     aiKey: Boolean(ai.apiKey),
     aiProvider: ai.provider,
-    webhookSecret: Boolean(cfg.webhookSecret),
-    adminPanel: cfg.adminUserIds.length > 0,
+    webhookSecret: true,
+    adminPanel: (settings?.adminIds.length ?? cfg.adminUserIds.length) > 0,
     model: ai.model,
   });
 });
@@ -184,8 +203,8 @@ app.get('/admin/setup', async (c) => {
     url: webhookUrl,
     allowed_updates: ['message', 'callback_query'],
     drop_pending_updates: true,
+    secret_token: await webhookSecretFor(cfg),
   };
-  if (cfg.webhookSecret) webhookBody.secret_token = cfg.webhookSecret;
   const hook = await telegramApi<boolean>(cfg, 'setWebhook', webhookBody);
   const commands = await telegramApi<boolean>(cfg, 'setMyCommands', { commands: BOT_COMMANDS });
 
@@ -194,9 +213,7 @@ app.get('/admin/setup', async (c) => {
     `setWebhook: ${hook.ok ? `✅ <code>${webhookUrl}</code>` : `⛔️ ${hook.description ?? 'failed'}`}`,
     `setMyCommands: ${commands.ok ? '✅ دستورها ثبت شد' : `⛔️ ${commands.description ?? 'failed'}`}`,
   ];
-  const warnings = cfg.webhookSecret
-    ? []
-    : ['<code>TELEGRAM_WEBHOOK_SECRET</code> خالی است؛ هر کسی می‌تواند آدرس وب‌هوک را صدا بزند. یک secret بساز و دوباره همین صفحه را باز کن.'];
+  const warnings: string[] = [];
 
   return c.html(
     setupResultPage({
@@ -216,4 +233,27 @@ app.onError((error, c) => {
   return c.json({ ok: false, error: 'internal error' }, 500);
 });
 
-export default app;
+/**
+ * Cron tick (every 10 minutes): re-registers the webhook if it ever drifted
+ * and trims expired cache rows and old button sessions.
+ */
+async function scheduled(_event: ScheduledController, env: Env): Promise<void> {
+  const cfg = readConfig(env);
+  if (!env.DB) return;
+  try {
+    await ensureSchema(env.DB);
+    const settings = await loadSettings(env, cfg, { fresh: true });
+    applyCachePolicy({
+      enabled: settings.cache.enabled,
+      translationTtl: settings.cache.translationDays * 86_400,
+      lyricsTtl: settings.cache.lyricsDays * 86_400,
+    });
+    if (settings.publicUrl) await ensureWebhook(env, cfg, settings.publicUrl);
+    await pruneCaches(env.DB);
+    await pruneSessions(env.DB);
+  } catch (error) {
+    logError('scheduled', error);
+  }
+}
+
+export default { fetch: app.fetch, scheduled };

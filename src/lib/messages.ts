@@ -79,8 +79,27 @@ export function quotaReached(limit: number): string {
 export const ADMIN_HELP_SECTION = `
 
 <b>🛠 بخش ادمین</b>
-/admin — پنل تنظیمات: سرویس و کلید هوش مصنوعی (OpenRouter)، مدل، زبان پیش‌فرض، سهمیهٔ روزانه و ثبت وبهوک.
-فقط آیدی‌های عددیِ <code>ADMIN_USER_ID</code> به این بخش دسترسی دارند.`;
+/admin — پنل مدیریت: هوش مصنوعی (سرویس، مدل، کلید)، زبان و سهمیه، کش، ادمین‌ها، حالت تعمیر و وبهوک.
+فقط آیدی‌های عددیِ ادمین به این بخش دسترسی دارند.`;
+
+export const MAINTENANCE = '🛠 ربات موقتاً در دست تعمیر است؛ کمی بعد دوباره امتحان کن.';
+
+export const CLAIM_USAGE = `🔐 برای ادمین‌شدن، توکن ربات را بعد از دستور بفرست:
+<code>/claim 123456:ABC…</code>
+
+(توکن همان است که از @BotFather گرفتی. پیامت بلافاصله پاک می‌شود.)`;
+
+export const CLAIM_INVALID = '⛔️ توکن درست نیست.';
+
+export const CLAIM_PRIVATE_ONLY = 'این دستور را فقط در چت خصوصی با ربات بزن.';
+
+export function claimDone(userId: number): string {
+  return `✅ حالا ادمین هستی (آیدی <code>${userId}</code>). برای باز کردن پنل /admin را بزن.`;
+}
+
+export function yourId(userId: number): string {
+  return `🆔 آیدی عددی تو: <code>${userId}</code>`;
+}
 
 export const AI_BASE_URL_MISSING = `🌐 آدرس سرویس هوش مصنوعی تنظیم نشده.
 

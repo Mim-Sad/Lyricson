@@ -9,7 +9,6 @@ import { escapeHtml } from './format.js';
 import { languageFor, TARGET_LANGUAGES } from './languages.js';
 import {
   maskSecret,
-  SETTING_KEYS,
   type SettingKey,
   type SettingsSnapshot,
 } from './settings.js';
@@ -20,14 +19,26 @@ export interface AdminPanel {
   keyboard: InlineKeyboard;
 }
 
-export type AdminScreen = 'home' | 'ai' | 'providers' | 'models' | 'defaults' | 'reset' | 'webhook';
+export type AdminScreen =
+  | 'home'
+  | 'ai'
+  | 'providers'
+  | 'models'
+  | 'defaults'
+  | 'reset'
+  | 'webhook'
+  | 'admins'
+  | 'cache';
 
 export type AdminInputField =
   | 'ai_key'
   | 'ai_base_url'
   | 'ai_model'
   | 'daily_limit'
-  | 'public_url';
+  | 'public_url'
+  | 'admin_add'
+  | 'cache_translation_days'
+  | 'cache_lyrics_days';
 
 export type AdminAction =
   | { kind: 'screen'; screen: AdminScreen }
@@ -39,6 +50,10 @@ export type AdminAction =
   | { kind: 'test' }
   | { kind: 'stats' }
   | { kind: 'clearCache' }
+  | { kind: 'pruneCache' }
+  | { kind: 'toggleCache' }
+  | { kind: 'toggleMaintenance' }
+  | { kind: 'removeAdmin'; id: number }
   | { kind: 'webhookRun' };
 
 export const SETTING_LABELS: Record<SettingKey, string> = {
@@ -49,7 +64,27 @@ export const SETTING_LABELS: Record<SettingKey, string> = {
   default_target_lang: 'زبان پیش‌فرض',
   daily_limit: 'سهمیهٔ روزانه',
   public_url: 'آدرس عمومی',
+  admin_ids: 'ادمین‌ها',
+  cache_enabled: 'کش',
+  cache_translation_days: 'ماندگاری کش ترجمه',
+  cache_lyrics_days: 'ماندگاری کش متن',
+  maintenance: 'حالت تعمیر',
+  webhook_state: 'وضعیت وبهوک',
 };
+
+/** Settings the reset screen may clear (admins, maintenance and webhook state have their own controls). */
+const RESETTABLE: readonly SettingKey[] = [
+  'ai_provider',
+  'ai_api_key',
+  'ai_base_url',
+  'ai_model',
+  'default_target_lang',
+  'daily_limit',
+  'public_url',
+  'cache_enabled',
+  'cache_translation_days',
+  'cache_lyrics_days',
+];
 
 const SCREEN_CALLBACKS: Record<string, AdminScreen> = {
   home: 'home',
@@ -59,6 +94,8 @@ const SCREEN_CALLBACKS: Record<string, AdminScreen> = {
   def: 'defaults',
   reset: 'reset',
   webhook: 'webhook',
+  admins: 'admins',
+  cache: 'cache',
 };
 
 const INPUT_CALLBACKS: Record<string, AdminInputField> = {
@@ -67,6 +104,9 @@ const INPUT_CALLBACKS: Record<string, AdminInputField> = {
   model: 'ai_model',
   limit: 'daily_limit',
   hookurl: 'public_url',
+  addadmin: 'admin_add',
+  ctdays: 'cache_translation_days',
+  cldays: 'cache_lyrics_days',
 };
 
 export function isAdmin(cfg: Config, userId: number | undefined): boolean {
@@ -88,8 +128,18 @@ export function parseAdminCallback(data: string): AdminAction | null {
       return { kind: 'test' };
     case 'stats':
       return { kind: 'stats' };
-    case 'cache':
+    case 'cache_clear':
       return { kind: 'clearCache' };
+    case 'prune':
+      return { kind: 'pruneCache' };
+    case 'tc':
+      return { kind: 'toggleCache' };
+    case 'tm':
+      return { kind: 'toggleMaintenance' };
+    case 'rm': {
+      const id = Number.parseInt(arg ?? '', 10);
+      return Number.isSafeInteger(id) && id > 0 ? { kind: 'removeAdmin', id } : null;
+    }
     case 'hookrun':
       return { kind: 'webhookRun' };
     case 'p': {
@@ -105,7 +155,7 @@ export function parseAdminCallback(data: string): AdminAction | null {
       return language ? { kind: 'setLang', code: language.code } : null;
     }
     case 'x':
-      return arg && (SETTING_KEYS as readonly string[]).includes(arg)
+      return arg && (RESETTABLE as readonly string[]).includes(arg)
         ? { kind: 'clear', key: arg as SettingKey }
         : null;
     default:
@@ -128,7 +178,8 @@ function homePanel(snapshot: SettingsSnapshot, cfg: Config): AdminPanel {
   const language = languageFor(snapshot.defaultTargetLang);
   const lines = [
     '🛠 <b>پنل مدیریت Lyricson</b>',
-    `👤 آیدی تو: <code>${escapeHtml(String(cfg.adminUserIds[0] ?? ''))}</code>`,
+    `👮 ادمین‌ها: ${faDigits(snapshot.adminIds.length)} نفر`,
+    snapshot.maintenance ? '⏸ <b>حالت تعمیر روشن است</b> — کاربران عادی پاسخی نمی‌گیرند.' : '',
     '',
     '<b>هوش مصنوعی</b>',
     `• سرویس: <b>${escapeHtml(preset.label)}</b>`,
@@ -139,6 +190,7 @@ function homePanel(snapshot: SettingsSnapshot, cfg: Config): AdminPanel {
     '<b>پیش‌فرض‌های ربات</b>',
     `• زبان مقصد: <b>${escapeHtml(language.nativeName)}</b>${sourceTag(snapshot, 'default_target_lang')}`,
     `• سهمیهٔ روزانه: <b>${faDigits(snapshot.dailyLimit)}</b> ترجمه برای هر کاربر${sourceTag(snapshot, 'daily_limit')}`,
+    `• کش: ${snapshot.cache.enabled ? '✅ روشن' : '⛔️ خاموش'}`,
     '',
     '<i>هر تغییری این‌جا بدهی همان لحظه اعمال می‌شود و بر مقادیر env اولویت دارد؛ با «بازگشت به پیش‌فرض‌های env» می‌توانی هر مقدار را پاک کنی.</i>',
   ];
@@ -153,12 +205,15 @@ function homePanel(snapshot: SettingsSnapshot, cfg: Config): AdminPanel {
     .text('🧪 تست اتصال', 'a:test')
     .text('📊 آمار امروز', 'a:stats')
     .row()
+    .text('💾 کش', 'a:cache')
+    .text('👮 ادمین‌ها', 'a:admins')
+    .row()
     .text('🔗 وبهوک', 'a:webhook')
-    .text('🧹 پاک‌کردن کش', 'a:cache')
+    .text(snapshot.maintenance ? '▶️ پایان حالت تعمیر' : '⏸ حالت تعمیر', 'a:tm')
     .row()
     .text('♻️ بازگشت به پیش‌فرض‌های env', 'a:reset');
 
-  return { text: lines.join('\n'), keyboard };
+  return { text: lines.filter((line, index) => line !== '' || lines[index - 1] !== '').join('\n'), keyboard };
 }
 
 function aiPanel(snapshot: SettingsSnapshot): AdminPanel {
@@ -251,7 +306,7 @@ function defaultsPanel(snapshot: SettingsSnapshot): AdminPanel {
 }
 
 function resetPanel(snapshot: SettingsSnapshot): AdminPanel {
-  const overrides = SETTING_KEYS.filter((key) => snapshot.fromDb.includes(key));
+  const overrides = RESETTABLE.filter((key) => snapshot.fromDb.includes(key));
   const keyboard = new InlineKeyboard();
   for (const key of overrides) {
     keyboard.text(`🗑 ${SETTING_LABELS[key]}`, `a:x:${key}`).row();
@@ -279,9 +334,57 @@ function webhookPanel(snapshot: SettingsSnapshot, cfg: Config): AdminPanel {
     '🔗 <b>وبهوک تلگرام</b>',
     '',
     `• آدرس عمومی: ${snapshot.publicUrl ? `<code>${escapeHtml(snapshot.publicUrl)}</code>` : '⛔️ تنظیم نشده'}`,
-    `• secret وبهوک: ${cfg.webhookSecret ? '✅ تنظیم شده' : '⚠️ خالی (امنیت کمتر)'}`,
+    `• secret وبهوک: ${cfg.webhookSecret ? '✅ از env' : '✅ خودکار (از توکن ربات)'}`,
     '',
     'آدرس عمومی همان دامنهٔ ورکر است، مثل <code>https://lyricson.example.workers.dev</code>. بعد از تغییر دامنه، یک‌بار «ثبت وبهوک» را بزن.',
+  ].join('\n');
+  return { text, keyboard };
+}
+
+function adminsPanel(snapshot: SettingsSnapshot, cfg: Config): AdminPanel {
+  const keyboard = new InlineKeyboard();
+  for (const id of snapshot.storedAdminIds) keyboard.text(`🗑 ${id}`, `a:rm:${id}`).row();
+  keyboard.text('➕ افزودن ادمین (آیدی عددی)', 'a:addadmin').row();
+  keyboard.text('⬅️ پنل', 'a:home');
+
+  const envLines = cfg.envAdminIds.map((id) => `• <code>${id}</code> <i>(از env؛ از اینجا حذف نمی‌شود)</i>`);
+  const storedLines = snapshot.storedAdminIds.map((id) => `• <code>${id}</code>`);
+  const all = [...envLines, ...storedLines];
+  const text = [
+    '👮 <b>ادمین‌ها</b>',
+    '',
+    all.length > 0 ? all.join('\n') : '⛔️ هنوز ادمینی ثبت نشده.',
+    '',
+    '<b>راه‌های اضافه‌کردن آیدی عددی:</b>',
+    '۱) همین‌جا «افزودن ادمین» و فرستادن آیدی عددی (آیدی را کاربر با /id در ربات می‌بیند یا از @userinfobot می‌گیرد).',
+    '۲) خودِ شخص در چت خصوصی بنویسد <code>/claim &lt;توکن ربات&gt;</code>.',
+    '۳) متغیر <code>ADMIN_USER_ID</code> (چند آیدی با کاما).',
+    '',
+    '<i>برای دکمهٔ 🗑 روی آیدی بزن تا ادمین حذف شود.</i>',
+  ].join('\n');
+  return { text, keyboard };
+}
+
+function cachePanel(snapshot: SettingsSnapshot): AdminPanel {
+  const keyboard = new InlineKeyboard()
+    .text(snapshot.cache.enabled ? '⛔️ خاموش‌کردن کش' : '✅ روشن‌کردن کش', 'a:tc')
+    .row()
+    .text(`⏳ ماندگاری ترجمه (${faDigits(snapshot.cache.translationDays)} روز)`, 'a:ctdays')
+    .row()
+    .text(`⏳ ماندگاری متن (${faDigits(snapshot.cache.lyricsDays)} روز)`, 'a:cldays')
+    .row()
+    .text('🧹 حذف منقضی‌ها', 'a:prune')
+    .text('🗑 پاک‌کردن همه', 'a:cache_clear')
+    .row()
+    .text('⬅️ پنل', 'a:home');
+  const text = [
+    '💾 <b>کش</b>',
+    '',
+    `• وضعیت: ${snapshot.cache.enabled ? '✅ روشن' : '⛔️ خاموش'}`,
+    `• ترجمه‌ها: ${faDigits(snapshot.cache.translationDays)} روز${sourceTag(snapshot, 'cache_translation_days')}`,
+    `• متن آهنگ‌ها: ${faDigits(snapshot.cache.lyricsDays)} روز${sourceTag(snapshot, 'cache_lyrics_days')}`,
+    '',
+    'نتیجهٔ جست‌وجو، متن آهنگ و ترجمه‌های تمام‌شده در دیتابیس D1 ذخیره می‌شوند؛ تپ دوباره روی دکمهٔ ترجمه بدون هزینهٔ AI و بدون مصرف سهمیه جواب می‌دهد. کلید ترجمه شامل مدل، زبان و خودِ متن است، پس با عوض‌کردن مدل ترجمهٔ تازه ساخته می‌شود. ردیف‌های منقضی هر ۱۰ دقیقه خودکار پاک می‌شوند.',
   ].join('\n');
   return { text, keyboard };
 }
@@ -304,6 +407,10 @@ export function renderScreen(
       return resetPanel(snapshot);
     case 'webhook':
       return webhookPanel(snapshot, cfg);
+    case 'admins':
+      return adminsPanel(snapshot, cfg);
+    case 'cache':
+      return cachePanel(snapshot);
     case 'home':
     default:
       return homePanel(snapshot, cfg);
@@ -318,6 +425,9 @@ export const INPUT_PROMPTS: Record<AdminInputField, string> = {
   ai_model:
     '🧠 شناسهٔ دقیق مدل را بفرست؛ مثلاً:\n<code>google/gemini-3.8-flash</code>',
   daily_limit: '🔢 سهمیهٔ روزانهٔ هر کاربر را به عدد بفرست (بین ۱ تا ۱۰۰۰).',
+  admin_add: '👮 آیدی عددی تلگرام شخص را بفرست (فقط رقم؛ مثلاً <code>123456789</code>).',
+  cache_translation_days: '⏳ ماندگاری کش ترجمه را به روز بفرست (۱ تا ۳۶۵).',
+  cache_lyrics_days: '⏳ ماندگاری کش متن آهنگ را به روز بفرست (۱ تا ۳۶۵).',
   public_url:
     '📝 آدرس عمومی ورکر را بفرست؛ مثلاً:\n<code>https://lyricson.example.workers.dev</code>',
 };

@@ -9,7 +9,7 @@ import { handleAdminCallback, handleAdminCommand, handleAdminText } from './admi
 import type { Config, Env } from './env.js';
 import { describeAiError, translateTrack } from './lib/ai.js';
 import { isAdmin } from './lib/admin-panel.js';
-import { loadSettings } from './lib/settings.js';
+import { addAdminId, loadSettings } from './lib/settings.js';
 import { isUserFacing, logError } from './lib/errors.js';
 import {
   candidateKeyboard,
@@ -26,7 +26,9 @@ import { getTrackById, getTrackByMetadata, searchTracks } from './lib/lyrics.js'
 import * as M from './lib/messages.js';
 import { toSourceLines, type Translation } from './lib/prompt.js';
 import {
+  applyCachePolicy,
   cacheGet,
+  cachePolicy,
   cachePut,
   consumeQuota,
   createSession,
@@ -42,7 +44,6 @@ import { isSearchPayload, type Session, type TrackSummary } from './lib/types.js
 
 const PAGE_SIZE = 5;
 const SEARCH_RESULT_LIMIT = 12;
-const TRANSLATION_TTL = 60 * 60 * 24 * 30;
 
 const HTML = { parse_mode: 'HTML', link_preview_options: { is_disabled: true } } as const;
 
@@ -72,7 +73,59 @@ export function createBot(env: Env, cfg: Config, botInfo?: UserFromGetMe): Bot {
     logError('bot', failure.error, { updateId: failure.ctx.update.update_id });
   });
 
+  // Refresh the live settings (admins, cache policy, maintenance) once per update.
+  bot.use(async (ctx, next) => {
+    const settings = await loadSettings(env, cfg);
+    cfg.adminUserIds = settings.adminIds;
+    applyCachePolicy({
+      enabled: settings.cache.enabled,
+      translationTtl: settings.cache.translationDays * 86_400,
+      lyricsTtl: settings.cache.lyricsDays * 86_400,
+    });
+    const isClaim = /^\/claim(@\w+)?(\s|$)/.test(ctx.message?.text ?? '');
+    if (settings.maintenance && !isAdmin(cfg, ctx.from?.id) && !isClaim) {
+      if (ctx.callbackQuery) {
+        await ctx.answerCallbackQuery({ text: M.MAINTENANCE, show_alert: true }).catch(() => undefined);
+      } else if (ctx.message) {
+        await ctx.reply(M.MAINTENANCE);
+      }
+      return;
+    }
+    await next();
+  });
+
   // -- commands ------------------------------------------------------------
+  bot.command('id', async (ctx) => {
+    await ctx.reply(M.yourId(userIdOf(ctx)), HTML);
+  });
+
+  // Anyone who knows the bot token (i.e. the owner) can become an admin.
+  bot.command('claim', async (ctx) => {
+    const userId = ctx.from?.id;
+    if (!userId) return;
+    if (ctx.chat?.type !== 'private') {
+      await ctx.reply(M.CLAIM_PRIVATE_ONLY);
+      return;
+    }
+    const given = String(ctx.match ?? '').trim();
+    // The message carries the token; remove it whatever the outcome.
+    await ctx.deleteMessage().catch(() => undefined);
+    if (!given) {
+      await ctx.reply(M.CLAIM_USAGE, HTML);
+      return;
+    }
+    if ((await sha256Hex(given)) !== (await sha256Hex(env.TELEGRAM_BOT_TOKEN.trim()))) {
+      await ctx.reply(M.CLAIM_INVALID);
+      return;
+    }
+    await addAdminId(env, userId);
+    cfg.adminUserIds = [...new Set([...cfg.adminUserIds, userId])];
+    await ctx.reply(M.claimDone(userId), {
+      ...HTML,
+      reply_markup: new InlineKeyboard().text('🛠 پنل مدیریت', 'a:home'),
+    });
+  });
+
   bot.command('start', async (ctx) => {
     if (isAdmin(cfg, ctx.from?.id)) {
       await ctx.reply(M.WELCOME, {
@@ -81,7 +134,9 @@ export function createBot(env: Env, cfg: Config, botInfo?: UserFromGetMe): Bot {
       });
       return;
     }
-    await ctx.reply(M.WELCOME, HTML);
+    // Until someone is admin, point the owner at /claim.
+    const setupHint = cfg.adminUserIds.length === 0 ? `\n\n<i>مالک ربات؟ برای ادمین‌شدن بنویس /claim</i>` : '';
+    await ctx.reply(M.WELCOME + setupHint, HTML);
   });
 
   bot.command('help', async (ctx) => {
@@ -103,7 +158,7 @@ export function createBot(env: Env, cfg: Config, botInfo?: UserFromGetMe): Bot {
   bot.on('message:text', async (ctx) => {
     const text = ctx.message.text.trim();
     if (text.startsWith('/')) {
-      await ctx.reply('این دستور رو نمی‌شناسم 🤔\nدستورها: /start · /help · /lang', HTML);
+      await ctx.reply('این دستور رو نمی‌شناسم 🤔\nدستورها: /start · /help · /lang · /id', HTML);
       return;
     }
     // A pending admin prompt takes the next plain message as its value.
@@ -517,7 +572,7 @@ async function onTranslate(ctx: BotContext, env: Env, cfg: Config, session: Sess
     [ai.provider, ai.model, language.code, String(track.id ?? track.trackName), track.lyrics ?? ''].join('|'),
   )}`;
 
-  const cached = await cacheGet<Translation>(env.DB, 'translation_cache', cacheKey, TRANSLATION_TTL);
+  const cached = await cacheGet<Translation>(env.DB, 'translation_cache', cacheKey, cachePolicy.translationTtl);
   if (!cached) {
     const quota = await consumeQuota(env.DB, userId, settings.dailyLimit);
     if (!quota.allowed) {

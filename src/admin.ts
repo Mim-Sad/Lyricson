@@ -15,15 +15,23 @@ import {
   type AdminScreen,
 } from './lib/admin-panel.js';
 import { escapeHtml } from './lib/format.js';
-import { loadSettings, maskSecret, saveSetting, saveSettings } from './lib/settings.js';
+import {
+  addAdminId,
+  loadSettings,
+  maskSecret,
+  removeAdminId,
+  saveSetting,
+  saveSettings,
+} from './lib/settings.js';
 import {
   clearAdminState,
   dayKey,
   ensureSchema,
   getAdminState,
+  pruneCaches,
   setAdminState,
 } from './lib/store.js';
-import { registerBotWebhook } from './lib/telegram.js';
+import { getWebhookInfo, registerBotWebhook } from './lib/telegram.js';
 import { faDigits } from './lib/text.js';
 
 const HTML = { parse_mode: 'HTML', link_preview_options: { is_disabled: true } } as const;
@@ -224,6 +232,48 @@ export async function handleAdminCallback(
       return true;
     }
 
+    case 'pruneCache': {
+      const removed = await pruneCaches(env.DB);
+      await refresh(
+        ctx,
+        env,
+        cfg,
+        'cache',
+        `🧹 منقضی‌ها پاک شدند — ${faDigits(removed.translations)} ترجمه و ${faDigits(removed.lyrics)} متن.`,
+      );
+      return true;
+    }
+
+    case 'toggleCache': {
+      const snapshot = await loadSettings(env, cfg, { fresh: true });
+      await saveSetting(env, 'cache_enabled', snapshot.cache.enabled ? 'off' : null);
+      await refresh(ctx, env, cfg, 'cache', snapshot.cache.enabled ? '⛔️ کش خاموش شد.' : '✅ کش روشن شد.');
+      return true;
+    }
+
+    case 'toggleMaintenance': {
+      const snapshot = await loadSettings(env, cfg, { fresh: true });
+      await saveSetting(env, 'maintenance', snapshot.maintenance ? null : 'on');
+      await refresh(
+        ctx,
+        env,
+        cfg,
+        'home',
+        snapshot.maintenance ? '▶️ حالت تعمیر تمام شد؛ ربات دوباره پاسخ می‌دهد.' : '⏸ حالت تعمیر روشن شد؛ فقط ادمین‌ها پاسخ می‌گیرند.',
+      );
+      return true;
+    }
+
+    case 'removeAdmin': {
+      if (action.id === userId) {
+        await refresh(ctx, env, cfg, 'admins', '⛔️ نمی‌توانی خودت را حذف کنی.');
+        return true;
+      }
+      await removeAdminId(env, action.id);
+      await refresh(ctx, env, cfg, 'admins', `🗑 ادمین <code>${action.id}</code> حذف شد.`);
+      return true;
+    }
+
     case 'webhookRun': {
       const snapshot = await loadSettings(env, cfg, { fresh: true });
       if (!snapshot.publicUrl) {
@@ -237,6 +287,7 @@ export async function handleAdminCallback(
         return true;
       }
       const result = await registerBotWebhook(cfg, snapshot.publicUrl);
+      const info = await getWebhookInfo(cfg);
       const lines = [
         '🔗 <b>ثبت وبهوک</b>',
         `آدرس: <code>${escapeHtml(result.webhookUrl)}</code>`,
@@ -246,6 +297,10 @@ export async function handleAdminCallback(
         result.commands.ok
           ? '✅ دستورها ثبت شد'
           : `⛔️ setMyCommands: ${escapeHtml(result.commands.description ?? 'ناموفق')}`,
+        ...(info.result?.last_error_message
+          ? [`⚠️ آخرین خطای تلگرام: ${escapeHtml(info.result.last_error_message)}`]
+          : []),
+        `در صف: ${faDigits(info.result?.pending_update_count ?? 0)}`,
       ];
       await ctx.reply(lines.join('\n'), {
         ...HTML,
@@ -337,6 +392,29 @@ export async function handleAdminText(
         'defaults',
         `✅ سهمیهٔ روزانه: <b>${faDigits(limit)}</b> ترجمه برای هر کاربر`,
       );
+      return true;
+    }
+
+    case 'admin_add': {
+      const id = Number.parseInt(value, 10);
+      if (!/^\d{5,15}$/.test(value) || !Number.isSafeInteger(id)) {
+        await ctx.reply('⛔️ آیدی عددی باید فقط رقم باشد (نه یوزرنیم)؛ از /id یا @userinfobot بگیر.', HTML);
+        return true;
+      }
+      await addAdminId(env, id);
+      await refresh(ctx, env, cfg, 'admins', `✅ ادمین <code>${id}</code> اضافه شد.`);
+      return true;
+    }
+
+    case 'cache_translation_days':
+    case 'cache_lyrics_days': {
+      const days = Number.parseInt(value, 10);
+      if (!/^\d+$/.test(value) || days < 1 || days > 365) {
+        await ctx.reply('⛔️ یک عدد بین ۱ تا ۳۶۵ بفرست.', HTML);
+        return true;
+      }
+      await saveSetting(env, field, String(days));
+      await refresh(ctx, env, cfg, 'cache', `✅ ماندگاری: <b>${faDigits(days)}</b> روز`);
       return true;
     }
 
