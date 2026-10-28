@@ -259,4 +259,5 @@ npm run build          # dist/index.js را می‌سازد
 - متن‌ها از [LRCLIB](https://lrclib.net) — رایگان، باز و بدون کلید.
 - چارچوب ربات: [grammY](https://grammy.dev) · وب: [Hono](https://hono.dev) · میزبانی: Cloudflare Workers.
 
+ساخته شده با 🤍
 MIT © Lyricson
