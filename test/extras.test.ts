@@ -200,3 +200,43 @@ describe('paginate', () => {
     expect(parts.join('\n')).toContain('lyric line number 199');
   });
 });
+
+describe('resilience helpers', () => {
+  it('strips Telegram HTML down to readable plain text', async () => {
+    const { stripHtml } = await import('../src/extras.js');
+    expect(stripHtml('<b>A &amp; B</b>\n<blockquote>x &lt; y</blockquote>')).toBe('A & B\nx < y');
+  });
+
+  it('builds an artist bio without the AI from Wikipedia and Deezer data', async () => {
+    const { fallbackArtistBio } = await import('../src/lib/insights.js');
+    const withWiki = fallbackArtistBio({
+      name: 'Coldplay',
+      fans: 1500000,
+      wikiExtract: 'Coldplay are a British rock band formed in London in 1997.',
+      wikiUrl: 'https://en.wikipedia.org/wiki/Coldplay',
+      photos: [],
+      albums: [],
+    });
+    expect(withWiki.caption).toContain('British rock band');
+    expect(withWiki.sources).toEqual(['https://en.wikipedia.org/wiki/Coldplay']);
+    const bare = fallbackArtistBio({ name: 'Nobody', photos: [], albums: [] });
+    expect(bare.caption).toBe('Nobody');
+  });
+
+  it('resolves a messy query to a clean artist and title through Deezer', async () => {
+    const { resolveCanonical } = await import('../src/lib/music.js');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({
+          data: [
+            { id: 1, title: 'Heathens', artist: { name: 'twenty one pilots' } },
+            { id: 2, title: 'Truce', artist: { name: 'twenty one pilots' } },
+          ],
+        }),
+      ),
+    );
+    expect(await resolveCanonical(NO_DB, 'Truce twenty one pilots')).toEqual({ title: 'Truce', artist: 'twenty one pilots' });
+    expect(await resolveCanonical(NO_DB, 'completely unrelated words here')).toBeNull();
+  });
+});

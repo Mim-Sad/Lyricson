@@ -6,7 +6,7 @@
  */
 import { LYRICSON_UA } from './identify.js';
 import { logError } from './errors.js';
-import { cacheGet, cachePut } from './store.js';
+import { cacheGet, cachePolicy, cachePut } from './store.js';
 import { normalize } from './text.js';
 import type { TrackSummary } from './types.js';
 
@@ -158,9 +158,11 @@ export async function findMusicInfo(
   spotify?: SpotifyCredentials,
 ): Promise<MusicInfo | null> {
   const key = `m:${trackKey(track)}`;
-  const cached = await cacheGet<MusicInfo | { none: true }>(db, 'lyric_cache', key, 60 * 60 * 24 * 30);
-  if (cached && 'none' in cached) return null;
+  const missKey = `mn:${trackKey(track)}`;
+  const cached = await cacheGet<MusicInfo>(db, 'lyric_cache', key, cachePolicy.lyricsTtl);
   if (cached) return cached;
+  // A miss is remembered for a day only: Deezer may add the track later.
+  if (await cacheGet<{ none: true }>(db, 'lyric_cache', missKey, 60 * 60 * 24)) return null;
 
   const queries = [`artist:"${track.artistName}" track:"${track.trackName}"`, `${track.artistName} ${track.trackName}`];
   let best: MusicInfo | null = null;
@@ -182,7 +184,7 @@ export async function findMusicInfo(
   }
   // Require the title to match; an unrelated hit is worse than no card at all.
   if (!best || bestScore < 1.5) {
-    await cachePut(db, 'lyric_cache', key, { none: true });
+    await cachePut(db, 'lyric_cache', missKey, { none: true });
     return null;
   }
 
@@ -342,7 +344,7 @@ export async function findArtistInfo(
   artistId?: number,
 ): Promise<ArtistInfo> {
   const key = `art:${normalize(name)}`;
-  const cached = await cacheGet<ArtistInfo>(db, 'lyric_cache', key, 60 * 60 * 24 * 30);
+  const cached = await cacheGet<ArtistInfo>(db, 'lyric_cache', key, cachePolicy.lyricsTtl);
   if (cached) return cached;
 
   const info: ArtistInfo = { name, photos: [], albums: [] };
@@ -394,4 +396,46 @@ export async function findArtistInfo(
 
   await cachePut(db, 'lyric_cache', key, info);
   return info;
+}
+
+// ---------------------------------------------------------------------------
+// Canonical title/artist for a free-text query
+// ---------------------------------------------------------------------------
+
+export interface Canonical {
+  title: string;
+  artist: string;
+}
+
+/**
+ * "Truce twenty one pilots" -> { title: "Truce", artist: "twenty one pilots" }.
+ * Deezer's catalogue is a far better parser of messy queries than any regex, and
+ * the clean pair makes the exact lyric lookups (LRCLIB /get, lyrics.ovh) hit.
+ */
+export async function resolveCanonical(db: D1Database, query: string): Promise<Canonical | null> {
+  const needle = normalize(query);
+  if (needle.length < 3) return null;
+  const key = `q:${needle.slice(0, 120)}`;
+  const cached = await cacheGet<Canonical>(db, 'lyric_cache', key, cachePolicy.lyricsTtl);
+  if (cached) return cached;
+  if (await cacheGet<{ none: true }>(db, 'lyric_cache', `qn:${needle.slice(0, 120)}`, 60 * 60 * 24)) return null;
+
+  const result = await getJson<{ data?: DeezerTrack[] }>(
+    `https://api.deezer.com/search?limit=6&q=${encodeURIComponent(query)}`,
+  );
+  let found: Canonical | null = null;
+  for (const item of result?.data ?? []) {
+    const info = fromDeezer(item);
+    if (!info) continue;
+    const title = normalize(info.title);
+    const artist = normalize(info.artist);
+    // Both the title and the artist must be recognisable inside what the user typed.
+    if (title.length > 1 && artist.length > 1 && needle.includes(title) && needle.includes(artist)) {
+      found = { title: info.title, artist: info.artist };
+      break;
+    }
+  }
+  if (found) await cachePut(db, 'lyric_cache', key, found);
+  else await cachePut(db, 'lyric_cache', `qn:${needle.slice(0, 120)}`, { none: true });
+  return found;
 }
