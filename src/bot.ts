@@ -36,6 +36,7 @@ import {
 } from './lib/format.js';
 import { buildFileInput, detectUrl, fetchId3Tags, resolveLink, type AudioMetadata } from './lib/identify.js';
 import { languageFor, TARGET_LANGUAGES } from './lib/languages.js';
+import { resolveCanonical } from './lib/music.js';
 import { getTrackById, getTrackByMetadata, searchTracks } from './lib/lyrics.js';
 import * as M from './lib/messages.js';
 import { toSourceLines, type Translation } from './lib/prompt.js';
@@ -51,6 +52,7 @@ import {
   getShare,
   getTargetLang,
   quotaUsed,
+  refundQuota,
   saveShare,
   setSessionMessageId,
   setTargetLang,
@@ -409,7 +411,7 @@ async function handleRequest(ctx: BotContext, env: Env, cfg: Config, input: Requ
     return;
   }
 
-  const hints = buildSearchHints({ ...(input.query ? { query: input.query } : {}), ...(input.title ? { title: input.title } : {}), ...(input.artist ? { artist: input.artist } : {}) });
+  let hints = buildSearchHints({ ...(input.query ? { query: input.query } : {}), ...(input.title ? { title: input.title } : {}), ...(input.artist ? { artist: input.artist } : {}) });
   const displayQuery = input.query ?? [input.artist, input.title].filter(Boolean).join(' ');
   if (hints.length === 0) {
     await settle(ctx, input.statusId, M.notFound(displayQuery || '—'));
@@ -418,6 +420,15 @@ async function handleRequest(ctx: BotContext, env: Env, cfg: Config, input: Requ
 
   // Answer instantly; the real result edits this message when it is ready.
   const statusId = input.statusId ?? (await sendStatus(ctx, M.SEARCHING));
+
+  // A free-text query ("Truce twenty one pilots") is first resolved to a clean
+  // artist + title through Deezer; the exact lookups below then hit far more often.
+  if (!input.title && !input.artist && displayQuery) {
+    const canonical = await withTimeout(resolveCanonical(env.DB, displayQuery), 2500).catch(() => null);
+    if (canonical) {
+      hints = buildSearchHints({ title: canonical.title, artist: canonical.artist, query: displayQuery });
+    }
+  }
 
   // Exact lookup first: when we already know artist and title it is a single
   // fast request and usually the right answer.
@@ -688,12 +699,10 @@ async function onTranslate(ctx: BotContext, env: Env, cfg: Config, session: Sess
   await ctx.answerCallbackQuery({ text: cached ? 'از حافظه می‌فرستم ⚡️' : 'شروع کردم ⏳' });
   if (!chatId) return;
 
-  const placeholder = await ctx.reply(M.TRANSLATING, {
-    ...HTML,
-    ...(session.messageId
-      ? { reply_parameters: { message_id: session.messageId, allow_sending_without_reply: true } }
-      : {}),
-  });
+  // Everything below replies to the message that holds the buttons.
+  const replyTo = ctx.callbackQuery?.message?.message_id ?? session.messageId;
+  const placeholderId = await sendStatus(ctx, M.TRANSLATING, replyTo);
+  let spentQuota = !cached;
 
   try {
     let translation = cached;
@@ -706,6 +715,7 @@ async function onTranslate(ctx: BotContext, env: Env, cfg: Config, session: Sess
       });
       await cachePut(env.DB, 'translation_cache', cacheKey, translation);
     }
+    spentQuota = false;
 
     const info = await withTimeout(musicInfoFor(env, settings, track), 2500);
     await saveShare(env.DB, await shareIdFor(track), track, { value: translation, language: language.code }).catch(
@@ -714,19 +724,18 @@ async function onTranslate(ctx: BotContext, env: Env, cfg: Config, session: Sess
     const doc = translationDoc(track, translation, language.nativeName, metaOf(track, info));
     if (translation.missing > 0) doc.foot = `${M.partialNotice(translation.missing).trim()}\n${doc.foot}`;
     const chunks = paginate(doc);
-    await ctx.api.editMessageText(chatId, placeholder.message_id, chunks[0] ?? '', HTML);
-    for (const chunk of chunks.slice(1)) {
-      await ctx.reply(chunk, {
-        ...HTML,
-        ...(session.messageId
-          ? { reply_parameters: { message_id: placeholder.message_id, allow_sending_without_reply: true } }
-          : {}),
-      });
+    for (const [index, chunk] of chunks.entries()) {
+      await settle(ctx, index === 0 ? placeholderId : undefined, chunk, replyTo ? { replyTo } : {});
     }
   } catch (error) {
     logError('translate', error, { userId, track: track.trackName });
+    // A failed AI call must not cost the user a translation from today's quota.
+    if (spentQuota) await refundQuota(env.DB, userId);
     const text = isUserFacing(error) ? error.userText : describeAiError(error);
-    await ctx.api.editMessageText(chatId, placeholder.message_id, text, HTML).catch(() => undefined);
+    await settle(ctx, placeholderId, text, {
+      reply_markup: retryKeyboard('t', session.id),
+      ...(replyTo ? { replyTo } : {}),
+    }).catch(() => undefined);
   }
 }
 

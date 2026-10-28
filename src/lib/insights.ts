@@ -227,3 +227,15 @@ export async function buildArtistBio(ai: AiConfig, artist: ArtistInfo): Promise<
   const wiki = artist.wikiUrl ? [artist.wikiUrl] : [];
   return { caption, bio: bio || caption, sources: [...new Set([...wiki, ...sources])].slice(0, 4) };
 }
+
+/** What we can say without the AI: Wikipedia's summary and Deezer's numbers. Better than nothing. */
+export function fallbackArtistBio(artist: ArtistInfo): ArtistBio {
+  const wiki = artist.wikiExtract?.trim() ?? '';
+  const firstSentences = wiki.length > 700 ? `${wiki.slice(0, 700).replace(/\s+\S*$/, '')}…` : wiki;
+  const facts = artist.fans ? `${artist.name} — ${artist.fans.toLocaleString('en-US')} fans on Deezer.` : artist.name;
+  return {
+    caption: firstSentences || facts,
+    bio: wiki || facts,
+    sources: artist.wikiUrl ? [artist.wikiUrl] : [],
+  };
+}

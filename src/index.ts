@@ -86,8 +86,12 @@ async function webhook(c: Context<AppEnv>): Promise<Response> {
     }
   })();
 
+  // Background work is cut off ~30 s after the response. Holding the response for up
+  // to 20 s gives slow AI calls (45 s timeout) enough room, while fast updates
+  // still answer Telegram immediately.
   try {
     c.executionCtx.waitUntil(work);
+    await Promise.race([work, new Promise((resolve) => setTimeout(resolve, 20_000))]);
   } catch {
     await work;
   }

@@ -10,6 +10,7 @@ import { isUserFacing, logError } from './lib/errors.js';
 import { paginate, retryKeyboard, type Doc, type TrackMeta } from './lib/format.js';
 import {
   buildArtistBio,
+  fallbackArtistBio,
   buildStory,
   buildVocabulary,
   type ArtistBio,
@@ -29,7 +30,7 @@ import {
   type MusicInfo,
 } from './lib/music.js';
 import { loadSettings, type SettingsSnapshot } from './lib/settings.js';
-import { cacheGet, cachePut, consumeQuota, saveShare } from './lib/store.js';
+import { cacheGet, cachePut, consumeQuota, refundQuota, saveShare } from './lib/store.js';
 import { normalize, sha256Hex } from './lib/text.js';
 import type { Session, TrackSummary } from './lib/types.js';
 
@@ -58,6 +59,8 @@ export async function settle(
 ): Promise<number> {
   const chatId = chatIdOf(ctx);
   const markup = extra.reply_markup ? { reply_markup: extra.reply_markup } : {};
+  const parseFailure = (error: unknown) => error instanceof Error && /can't parse entities|can't find end/i.test(error.message);
+
   if (statusId && chatId) {
     try {
       await ctx.api.editMessageText(chatId, statusId, text, { ...HTML, ...markup });
@@ -65,10 +68,40 @@ export async function settle(
     } catch (error) {
       if (error instanceof Error && /message is not modified/i.test(error.message)) return statusId;
       logError('settle', error);
+      if (parseFailure(error)) {
+        // Broken markup must never cost the user the answer: resend it as plain text.
+        try {
+          await ctx.api.editMessageText(chatId, statusId, stripHtml(text), { ...markup, link_preview_options: { is_disabled: true } });
+          return statusId;
+        } catch (plainError) {
+          logError('settle.plain', plainError);
+        }
+      }
     }
   }
-  const sent = await ctx.reply(text, { ...HTML, ...markup, ...replyParams(extra.replyTo) });
-  return sent.message_id;
+  try {
+    const sent = await ctx.reply(text, { ...HTML, ...markup, ...replyParams(extra.replyTo) });
+    return sent.message_id;
+  } catch (error) {
+    if (!parseFailure(error)) throw error;
+    logError('settle.reply', error);
+    const sent = await ctx.reply(stripHtml(text), {
+      ...markup,
+      link_preview_options: { is_disabled: true },
+      ...replyParams(extra.replyTo),
+    });
+    return sent.message_id;
+  }
+}
+
+/** Telegram-HTML to plain text: drop tags, decode the four entities we emit. */
+export function stripHtml(text: string): string {
+  return text
+    .replace(/<[^>]*>/g, '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&');
 }
 
 export async function sendStatus(ctx: Context, text: string, replyTo?: number): Promise<number | undefined> {
@@ -231,6 +264,8 @@ async function cachedInsight<T>(
   c: InsightContext,
   key: string,
   build: (ai: SettingsSnapshot['ai']) => Promise<T>,
+  /** Used (but never cached) when the AI fails, so the user still gets an answer. */
+  fallback?: () => T,
 ): Promise<T | null> {
   const settings = await loadSettings(c.env, c.cfg);
   const cacheKey = `x:${c.kind}:${await sha256Hex(key)}`;
@@ -252,6 +287,8 @@ async function cachedInsight<T>(
     return value;
   } catch (error) {
     logError(`insight.${c.kind}`, error);
+    await refundQuota(c.env.DB, c.ctx.from?.id ?? 0);
+    if (fallback) return fallback();
     await failWithRetry(c, isUserFacing(error) ? error.userText : describeAiError(error));
     return null;
   }
@@ -308,7 +345,12 @@ export async function onInsight(
     logError('artistInfo', error);
     return { name, photos: [], albums: [] };
   });
-  const bio = await cachedInsight<ArtistBio>(c, normalize(name), (ai) => buildArtistBio(ai, artist));
+  const bio = await cachedInsight<ArtistBio>(
+    c,
+    normalize(name),
+    (ai) => buildArtistBio(ai, artist),
+    () => fallbackArtistBio(artist),
+  );
   if (!bio) return;
 
   const caption = artistCaption(artist.name, bio, artist.fans);

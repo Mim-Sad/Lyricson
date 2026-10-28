@@ -171,7 +171,8 @@ export async function setSessionMessageId(db: D1Database, id: string, messageId:
   await db.prepare('UPDATE sessions SET message_id = ?1 WHERE id = ?2').bind(messageId, id).run();
 }
 
-export async function pruneSessions(db: D1Database, olderThanSeconds = 60 * 60 * 48): Promise<void> {
+/** Buttons stay valid for 30 days. */
+export async function pruneSessions(db: D1Database, olderThanSeconds = 60 * 60 * 24 * 30): Promise<void> {
   try {
     await db
       .prepare('DELETE FROM sessions WHERE created_at < ?1')
@@ -363,6 +364,18 @@ export async function clearAdminState(db: D1Database, userId: number): Promise<v
     await db.prepare('DELETE FROM admin_state WHERE user_id = ?1').bind(userId).run();
   } catch {
     // Best effort: a stale prompt expires on its own.
+  }
+}
+
+/** Gives back one use when the AI call it was spent on failed. */
+export async function refundQuota(db: D1Database, userId: number): Promise<void> {
+  try {
+    await db
+      .prepare('UPDATE usage SET count = MAX(count - 1, 0) WHERE user_id = ?1 AND day = ?2')
+      .bind(userId, dayKey())
+      .run();
+  } catch {
+    // Best effort.
   }
 }
 
