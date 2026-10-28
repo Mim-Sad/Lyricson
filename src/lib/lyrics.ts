@@ -3,6 +3,7 @@
  * Every call is cached in D1 so repeated taps cost nothing.
  */
 import { logError } from './errors.js';
+import { searchFallback } from './fallback-lyrics.js';
 import { LYRICSON_UA } from './identify.js';
 import { cacheGet, cachePolicy, cachePut } from './store.js';
 import { normalize, type SearchHint } from './text.js';
@@ -40,6 +41,8 @@ export function lrclibWasThrottled(withinMs = 20_000): boolean {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function lrclibFetch<T>(path: string): Promise<T | null> {
+  // Just throttled: do not hammer LRCLIB again for a minute, the fallback source takes over.
+  if (lrclibWasThrottled(60_000)) return null;
   // Workers share egress IPs, so LRCLIB sometimes answers 429; wait and retry.
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
@@ -167,6 +170,8 @@ export async function searchTracks(db: D1Database, hints: SearchHint[], limit = 
     merged.push(...(await searchOnce(db, hint)));
     if (merged.some((track) => track.lyrics)) break;
   }
+  // LRCLIB empty or throttled: ask the second source before giving up.
+  if (!merged.some((track) => track.lyrics)) merged.push(...(await searchFallback(attempts)));
   // The same song exists many times in LRCLIB; keep one entry per track+artist,
   // preferring the copy that actually carries lyrics.
   const usable = merged.filter((track) => Boolean(track.lyrics));

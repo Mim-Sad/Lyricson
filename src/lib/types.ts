@@ -10,7 +10,7 @@ export interface TrackSummary {
   instrumental?: boolean;
   /** Present only for user-supplied lyrics (and for the chosen track). */
   lyrics?: string;
-  source: 'lrclib' | 'user';
+  source: 'lrclib' | 'lyrics.ovh' | 'user';
 }
 
 export type SessionPayload =
