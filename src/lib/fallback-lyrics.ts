@@ -25,12 +25,16 @@ interface SuggestResponse {
   }[];
 }
 
+/** Number of responses that proved a service is up (any 2xx, or a plain 404). */
+let reached = 0;
+
 async function getJson<T>(url: string): Promise<T | null> {
   try {
     const response = await fetch(url, {
       headers: { accept: 'application/json', 'user-agent': LYRICSON_UA },
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
+    if (response.ok || response.status === 404) reached++;
     if (!response.ok) return null;
     return (await response.json()) as T;
   } catch (error) {
@@ -101,12 +105,26 @@ async function searchLyrist(hint: SearchHint): Promise<TrackSummary[]> {
   ];
 }
 
-export async function searchFallback(hints: SearchHint[]): Promise<TrackSummary[]> {
+export async function searchFallback(
+  hints: SearchHint[],
+): Promise<{ tracks: TrackSummary[]; reachable: boolean }> {
+  const before = reached;
   const hint = hints.find((entry) => entry.q && entry.q.length > 1);
-  if (!hint) return [];
-  const fromOvh = await searchOvh(hint);
-  if (fromOvh.length > 0) return fromOvh;
-  return searchLyrist(hint);
+  if (!hint) return { tracks: [], reachable: true };
+
+  // With a known artist and title the direct lookup is one request and the most precise.
+  if (hint.track && hint.artist) {
+    const direct = await fetchOvhLyrics(hint.artist, hint.track);
+    if (direct) {
+      return {
+        tracks: [{ trackName: hint.track, artistName: hint.artist, lyrics: direct, source: 'lyrics.ovh' }],
+        reachable: true,
+      };
+    }
+  }
+  let tracks = await searchOvh(hint);
+  if (tracks.length === 0) tracks = await searchLyrist(hint);
+  return { tracks, reachable: reached > before };
 }
 
 export async function probeFallback(): Promise<{ ok: boolean; detail: string }> {

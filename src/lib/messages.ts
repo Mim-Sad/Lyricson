@@ -2,7 +2,7 @@
  * One place for everything the user sees, in Persian. Keeping the copy here
  * makes the handlers readable and the wording easy to change.
  */
-import { faDigits } from './text.js';
+import { faDigits, latinDigits } from './text.js';
 
 export const BOT_NAME = 'Lyricson';
 
@@ -25,9 +25,9 @@ export const HELP = `📖 <b>راهنما</b>
 ┄┄┄┄┄┄┄┄┄┄┄┄
 
 <b>چطور کار می‌کنه؟</b>
-۱. اسم، لینک، فایل یا متن موزیک رو بفرست.
-۲. اگر مطمئن باشم مستقیم متن رو می‌فرستم؛ وگرنه چند گزینهٔ نزدیک نشونت می‌دم.
-۳. با دکمهٔ «ترجمهٔ خط‌به‌خط» هر خط رو با ترجمه، مفهوم کلی آهنگ و معنی استعاره‌ها می‌گیری.
+1. اسم، لینک، فایل یا متن موزیک رو بفرست.
+2. اگر مطمئن باشم مستقیم متن رو می‌فرستم؛ وگرنه چند گزینهٔ نزدیک نشونت می‌دم.
+3. با دکمهٔ «ترجمهٔ خط‌به‌خط» هر خط رو با ترجمه، مفهوم کلی آهنگ و معنی استعاره‌ها می‌گیری.
 
 <b>برای نتیجهٔ بهتر</b>
 • «خواننده + اسم آهنگ» دقیق‌ترین ورودیه.
@@ -130,7 +130,7 @@ ${enabledLanguages}
 }
 
 export function escapeForMessage(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return latinDigits(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 export function partialNotice(missing: number): string {
@@ -139,6 +139,9 @@ export function partialNotice(missing: number): string {
 
 export const LYRICS_BUSY = '⏳ سرویس‌های متن الان شلوغ‌اند و جواب ندادند؛ چند ثانیه بعد همین را دوباره بفرست.';
 
-export const STORY_WORKING = '📖 دارم دربارهٔ داستان این موزیک تحقیق می‌کنم (مصاحبه‌ها، مقاله‌ها و بحث‌ها)؛ ممکنه تا ۲۰ ثانیه طول بکشه…';
+export const STORY_WORKING = '📖 دارم دربارهٔ داستان این موزیک تحقیق می‌کنم (مصاحبه‌ها، مقاله‌ها و بحث‌ها)؛ ممکنه تا 25 ثانیه طول بکشه…';
 export const WORDS_WORKING = '🎓 دارم کلمه‌های ارزشمند متن رو انتخاب و مرتب می‌کنم…';
 export const ARTIST_WORKING = '👤 دارم دربارهٔ هنرمند تحقیق می‌کنم…';
+
+export const SHARE_MISSING = '😕 این کارت دیگر در دسترس نیست؛ اسم موزیک را دوباره بفرست.';
+export const NO_TRANSLATION_YET = '🌐 هنوز ترجمه‌ای برای این موزیک ساخته نشده؛ متن را می‌فرستم و با دکمهٔ «ترجمه» می‌توانی بگیری.';

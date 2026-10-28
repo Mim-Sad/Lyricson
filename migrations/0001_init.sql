@@ -70,3 +70,14 @@ CREATE TABLE IF NOT EXISTS shares (
   language    TEXT,
   created_at  INTEGER NOT NULL
 );
+
+-- Users who started the bot (for admin announcements).
+CREATE TABLE IF NOT EXISTS users (
+  user_id      INTEGER PRIMARY KEY,
+  first_name   TEXT,
+  username     TEXT,
+  first_seen   INTEGER NOT NULL,
+  last_seen    INTEGER NOT NULL,
+  blocked      INTEGER NOT NULL DEFAULT 0,
+  notified_for TEXT
+);

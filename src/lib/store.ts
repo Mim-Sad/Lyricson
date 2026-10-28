@@ -55,6 +55,15 @@ const SCHEMA: string[] = [
      language TEXT,
      created_at INTEGER NOT NULL
    )`,
+  `CREATE TABLE IF NOT EXISTS users (
+     user_id INTEGER PRIMARY KEY,
+     first_name TEXT,
+     username TEXT,
+     first_seen INTEGER NOT NULL,
+     last_seen INTEGER NOT NULL,
+     blocked INTEGER NOT NULL DEFAULT 0,
+     notified_for TEXT
+   )`,
   `CREATE TABLE IF NOT EXISTS admin_state (
      user_id INTEGER PRIMARY KEY,
      action TEXT NOT NULL,
@@ -422,4 +431,73 @@ export async function getShare(db: D1Database, id: string): Promise<ShareRecord 
   } catch {
     return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Users (for admin announcements)
+// ---------------------------------------------------------------------------
+
+/** Remembers a private-chat user; a user who writes again is no longer "blocked". */
+export async function touchUser(
+  db: D1Database,
+  user: { id: number; first_name?: string; username?: string },
+): Promise<void> {
+  try {
+    await ensureSchema(db);
+    const now = nowSeconds();
+    await db
+      .prepare(
+        `INSERT INTO users (user_id, first_name, username, first_seen, last_seen, blocked) VALUES (?1, ?2, ?3, ?4, ?4, 0)
+         ON CONFLICT(user_id) DO UPDATE SET first_name = excluded.first_name, username = excluded.username,
+           last_seen = excluded.last_seen, blocked = 0`,
+      )
+      .bind(user.id, user.first_name ?? null, user.username ?? null, now)
+      .run();
+  } catch {
+    // Tracking must never break a request.
+  }
+}
+
+export async function userCounts(
+  db: D1Database,
+  broadcastId: string,
+): Promise<{ total: number; reachable: number; pending: number }> {
+  await ensureSchema(db);
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS total,
+              COALESCE(SUM(CASE WHEN blocked = 0 THEN 1 ELSE 0 END), 0) AS reachable,
+              COALESCE(SUM(CASE WHEN blocked = 0 AND COALESCE(notified_for, '') != ?1 THEN 1 ELSE 0 END), 0) AS pending
+       FROM users`,
+    )
+    .bind(broadcastId)
+    .first<{ total: number; reachable: number; pending: number }>();
+  return { total: Number(row?.total ?? 0), reachable: Number(row?.reachable ?? 0), pending: Number(row?.pending ?? 0) };
+}
+
+export async function pendingRecipients(db: D1Database, broadcastId: string, limit: number): Promise<number[]> {
+  await ensureSchema(db);
+  const rows = await db
+    .prepare(
+      `SELECT user_id FROM users WHERE blocked = 0 AND COALESCE(notified_for, '') != ?1 ORDER BY user_id LIMIT ?2`,
+    )
+    .bind(broadcastId, limit)
+    .all<{ user_id: number }>();
+  return (rows.results ?? []).map((row) => row.user_id);
+}
+
+export async function markNotified(
+  db: D1Database,
+  userId: number,
+  broadcastId: string,
+  outcome: 'sent' | 'blocked',
+): Promise<void> {
+  await db
+    .prepare(
+      outcome === 'blocked'
+        ? 'UPDATE users SET blocked = 1, notified_for = ?2 WHERE user_id = ?1'
+        : 'UPDATE users SET notified_for = ?2 WHERE user_id = ?1',
+    )
+    .bind(userId, broadcastId)
+    .run();
 }

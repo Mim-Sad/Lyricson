@@ -7,6 +7,7 @@ import {
   decideMatch,
   dice,
   faDigits,
+  latinDigits,
   isSpecificQuery,
   looksLikeLyrics,
   normalize,
@@ -132,10 +133,11 @@ describe('pasted lyrics detection', () => {
 });
 
 describe('small helpers', () => {
-  it('formats durations and digits for Persian readers', () => {
+  it('formats durations and keeps digits Latin', () => {
     expect(clock(267)).toBe('4:27');
     expect(clock(undefined)).toBe('');
-    expect(faDigits(1234)).toBe('۱۲۳۴');
+    expect(faDigits(1234)).toBe('1234');
+    expect(latinDigits('نسخهٔ ۱۲۳ و ٤٥')).toBe('نسخهٔ 123 و 45');
   });
 
   it('unwraps AI notes exactly once', () => {

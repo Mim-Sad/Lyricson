@@ -24,6 +24,8 @@ export interface MusicInfo {
   cover?: string;
   coverMedium?: string;
   duration?: number;
+  /** Album release date as Deezer reports it (YYYY-MM-DD). */
+  releaseDate?: string;
   /** 30-second MP3 preview; the URL is signed and expires, so it is refreshed on demand. */
   preview?: string;
   deezerUrl?: string;
@@ -184,12 +186,50 @@ export async function findMusicInfo(
     return null;
   }
 
-  if (spotify) {
-    const spotifyUrl = await findSpotifyUrl(spotify, track);
-    if (spotifyUrl) best.spotifyUrl = spotifyUrl;
-  }
+  const [spotifyUrl, album] = await Promise.all([
+    spotify ? findSpotifyUrl(spotify, track) : Promise.resolve(undefined),
+    best.albumId
+      ? getJson<{ release_date?: string }>(`https://api.deezer.com/album/${best.albumId}`)
+      : Promise.resolve(null),
+  ]);
+  if (spotifyUrl) best.spotifyUrl = spotifyUrl;
+  if (album?.release_date && /^\d{4}-\d{2}-\d{2}$/.test(album.release_date)) best.releaseDate = album.release_date;
   await cachePut(db, 'lyric_cache', key, best);
   return best;
+}
+
+/** "Coldplay - Yellow" by "Coldplay" -> "Yellow"; messy upload titles are common in lyric databases. */
+export function cleanTitle(title: string, artist: string): string {
+  const trimmed = title.trim();
+  const lower = trimmed.toLowerCase();
+  const prefix = `${artist.trim().toLowerCase()} - `;
+  if (artist.trim() && lower.startsWith(prefix) && trimmed.length > prefix.length) return trimmed.slice(prefix.length).trim();
+  return trimmed;
+}
+
+export interface TrackIdentity {
+  title: string;
+  artist: string;
+  album?: string;
+  date?: string;
+  link?: string;
+}
+
+/** The facts shown in the header: Deezer's canonical data when we have it, otherwise the lyric source's. */
+export function identityOf(
+  track: Pick<TrackSummary, 'trackName' | 'artistName' | 'albumName'>,
+  info: MusicInfo | null | undefined,
+): TrackIdentity {
+  const artist = info?.artist ?? track.artistName;
+  const album = info?.album ?? track.albumName;
+  const link = primaryLink(info);
+  return {
+    title: info?.title ?? cleanTitle(track.trackName, artist),
+    artist,
+    ...(album ? { album } : {}),
+    ...(info?.releaseDate ? { date: info.releaseDate } : {}),
+    ...(link ? { link } : {}),
+  };
 }
 
 /** The best link for the song title: Spotify when we found it, else Deezer. */

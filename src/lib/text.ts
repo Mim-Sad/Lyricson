@@ -57,10 +57,14 @@ export function detectUrls(text: string): string[] {
   return matches.map((url) => url.replace(/[.,،؛;:!؟?]+$/u, ''));
 }
 
-const FA_DIGITS = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
-
+/** Numbers stay Latin everywhere in the bot (kept as a function so call sites read naturally). */
 export function faDigits(input: string | number): string {
-  return String(input).replace(/[0-9]/g, (digit) => FA_DIGITS[Number(digit)] ?? digit);
+  return String(input);
+}
+
+/** Persian/Arabic-Indic digits -> ASCII digits, for text coming from AI models and lyrics. */
+export function latinDigits(input: string): string {
+  return input.replace(/[۰-۹٠-٩]/g, (digit) => PERSIAN_DIGIT_MAP[digit] ?? digit);
 }
 
 export function truncate(input: string, max: number): string {
