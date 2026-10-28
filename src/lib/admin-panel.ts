@@ -48,6 +48,7 @@ export type AdminAction =
   | { kind: 'setLang'; code: string }
   | { kind: 'clear'; key: SettingKey }
   | { kind: 'test' }
+  | { kind: 'diagnose' }
   | { kind: 'stats' }
   | { kind: 'clearCache' }
   | { kind: 'pruneCache' }
@@ -126,6 +127,8 @@ export function parseAdminCallback(data: string): AdminAction | null {
   switch (action) {
     case 'test':
       return { kind: 'test' };
+    case 'diag':
+      return { kind: 'diagnose' };
     case 'stats':
       return { kind: 'stats' };
     case 'cache_clear':
@@ -204,6 +207,8 @@ function homePanel(snapshot: SettingsSnapshot, cfg: Config): AdminPanel {
     .row()
     .text('🧪 تست اتصال', 'a:test')
     .text('📊 آمار امروز', 'a:stats')
+    .row()
+    .text('🩺 تشخیص مشکل', 'a:diag')
     .row()
     .text('💾 کش', 'a:cache')
     .text('👮 ادمین‌ها', 'a:admins')

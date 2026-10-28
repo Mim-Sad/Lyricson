@@ -134,9 +134,7 @@ export function createBot(env: Env, cfg: Config, botInfo?: UserFromGetMe): Bot {
       });
       return;
     }
-    // Until someone is admin, point the owner at /claim.
-    const setupHint = cfg.adminUserIds.length === 0 ? `\n\n<i>مالک ربات؟ برای ادمین‌شدن بنویس /claim</i>` : '';
-    await ctx.reply(M.WELCOME + setupHint, HTML);
+    await ctx.reply(M.WELCOME, HTML);
   });
 
   bot.command('help', async (ctx) => {

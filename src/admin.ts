@@ -31,7 +31,8 @@ import {
   pruneCaches,
   setAdminState,
 } from './lib/store.js';
-import { getWebhookInfo, registerBotWebhook } from './lib/telegram.js';
+import { getWebhookInfo, registerBotWebhook, telegramApi } from './lib/telegram.js';
+import { probeLrclib } from './lib/lyrics.js';
 import { faDigits } from './lib/text.js';
 
 const HTML = { parse_mode: 'HTML', link_preview_options: { is_disabled: true } } as const;
@@ -193,6 +194,33 @@ export async function handleAdminCallback(
       await ctx.reply(lines.join('\n'), {
         ...HTML,
         reply_markup: new InlineKeyboard().text('⬅️ هوش مصنوعی', 'a:ai'),
+      });
+      return true;
+    }
+
+    case 'diagnose': {
+      const snapshot = await loadSettings(env, cfg, { fresh: true });
+      const [me, lyrics, ai, hook] = await Promise.all([
+        telegramApi<{ username?: string }>(cfg, 'getMe'),
+        probeLrclib(),
+        testAiConnection(snapshot.ai),
+        getWebhookInfo(cfg),
+      ]);
+      const mark = (ok: boolean | undefined) => (ok ? '✅' : '⛔️');
+      const lines = [
+        '🩺 <b>تشخیص</b>',
+        '',
+        `${mark(me.ok)} تلگرام: ${escapeHtml(me.ok ? `@${me.result?.username ?? '?'}` : (me.description ?? 'خطا'))}`,
+        `${mark(Boolean(hook.result?.url))} وبهوک: <code>${escapeHtml(hook.result?.url ?? '—')}</code>${
+          hook.result?.last_error_message ? `\n   ⚠️ ${escapeHtml(hook.result.last_error_message)}` : ''
+        }`,
+        `${mark(lyrics.ok)} LRCLIB (جست‌وجوی متن): ${escapeHtml(lyrics.detail)}`,
+        `${mark(ai.ok)} هوش مصنوعی (<code>${escapeHtml(ai.model || '—')}</code>): ${escapeHtml(ai.detail ?? '')}`,
+        `کلید: ${snapshot.ai.apiKey ? '✅ ثبت شده' : '⛔️ ثبت نشده'} · ادمین‌ها: ${faDigits(snapshot.adminIds.length)}`,
+      ];
+      await ctx.reply(lines.join('\n'), {
+        ...HTML,
+        reply_markup: new InlineKeyboard().text('⬅️ پنل', 'a:home'),
       });
       return true;
     }

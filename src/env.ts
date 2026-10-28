@@ -200,7 +200,11 @@ export interface SetupCheck {
 }
 
 /** Used by the landing page and by /admin/setup. */
-export function setupChecks(env: Env, cfg: Config): SetupCheck[] {
+export function setupChecks(
+  env: Env,
+  cfg: Config,
+  live?: { hasAiKey: boolean; adminCount: number },
+): SetupCheck[] {
   return [
     {
       label: 'TELEGRAM_BOT_TOKEN',
@@ -216,14 +220,14 @@ export function setupChecks(env: Env, cfg: Config): SetupCheck[] {
     },
     {
       label: 'AI_API_KEY',
-      hint: 'کلید OpenRouter (یا هر سرویس سازگار با OpenAI) را ست کن؛ داخل ربات هم می‌شود از پنل ادمین گذاشت.',
-      ok: Boolean(cfg.ai.apiKey),
+      hint: 'کلید OpenRouter را ست کن یا از پنل ادمین داخل ربات بگذار.',
+      ok: live ? live.hasAiKey : Boolean(cfg.ai.apiKey),
       required: false,
     },
     {
       label: 'ADMIN_USER_ID',
-      hint: 'اختیاری: یا آیدی عددی را اینجا بگذار، یا در ربات بنویس /claim <توکن ربات> تا ادمین شوی.',
-      ok: cfg.adminUserIds.length > 0,
+      hint: 'آیدی عددی ادمین؛ اگر از داخل ربات ادمین ثبت کرده‌ای، این مورد خودکار سبز می‌شود.',
+      ok: (live ? live.adminCount : cfg.adminUserIds.length) > 0,
       required: false,
     },
   ];

@@ -2,6 +2,7 @@
  * LRCLIB client. Free, no API key, no sign up: https://lrclib.net
  * Every call is cached in D1 so repeated taps cost nothing.
  */
+import { logError } from './errors.js';
 import { LYRICSON_UA } from './identify.js';
 import { cacheGet, cachePolicy, cachePut } from './store.js';
 import { normalize, type SearchHint } from './text.js';
@@ -29,10 +30,31 @@ async function lrclibFetch<T>(path: string): Promise<T | null> {
       headers: { accept: 'application/json', 'user-agent': LYRICSON_UA },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      logError('lrclib', new Error(`HTTP ${response.status}`), { path });
+      return null;
+    }
     return (await response.json()) as T;
-  } catch {
+  } catch (error) {
+    logError('lrclib', error, { path });
     return null;
+  }
+}
+
+/** One live request for the admin diagnostics screen. */
+export async function probeLrclib(): Promise<{ ok: boolean; detail: string }> {
+  const started = Date.now();
+  try {
+    const response = await fetch(`${LRCLIB_BASE}/search?q=${encodeURIComponent('coldplay yellow')}`, {
+      headers: { accept: 'application/json', 'user-agent': LYRICSON_UA },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    const ms = Date.now() - started;
+    if (!response.ok) return { ok: false, detail: `HTTP ${response.status} (${ms}ms)` };
+    const body = (await response.json()) as unknown[];
+    return { ok: Array.isArray(body) && body.length > 0, detail: `${Array.isArray(body) ? body.length : 0} نتیجه (${ms}ms)` };
+  } catch (error) {
+    return { ok: false, detail: error instanceof Error ? error.message : String(error) };
   }
 }
 
