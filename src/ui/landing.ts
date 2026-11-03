@@ -92,7 +92,7 @@ export function landingPage(info: LandingInfo): string {
 
   const missingRequired = info.checks.filter((check) => check.required && !check.ok);
   const todos = missingRequired
-    .map((check) => `<li><code>${escapeHtml(check.label)}</code> — ${escapeHtml(check.hint)}</li>`)
+    .map((check) => `<li><code>${escapeHtml(check.label)}</code> - ${escapeHtml(check.hint)}</li>`)
     .join('');
 
   const ready = missingRequired.length === 0;
@@ -100,7 +100,7 @@ export function landingPage(info: LandingInfo): string {
   return page(
     'Lyricson',
     `<header><span class="logo">🎵</span><h1>Lyricson</h1></header>
-<p class="tagline">ربات تلگرام ترجمهٔ هوشمند متن موزیک — خط‌به‌خط، با معنی واقعی استعاره‌ها.</p>
+<p class="tagline">ربات تلگرام ترجمهٔ هوشمند متن موزیک - خط‌به‌خط، با معنی واقعی استعاره‌ها.</p>
 
 <div class="card">
   <h2>وضعیت راه‌اندازی</h2>
@@ -110,7 +110,7 @@ export function landingPage(info: LandingInfo): string {
       ? '<p class="hint">دیتابیس D1 در دسترس است و جدول‌ها آماده‌اند.</p>'
       : `<p class="hint">اتصال به D1 برقرار نشد${info.databaseError ? `: <code>${escapeHtml(info.databaseError)}</code>` : ''}</p>`
   }
-  <p class="hint">مدل فعال: <code>${escapeHtml(info.model)}</code> · سهمیهٔ روزانه: <code>${escapeHtml(String(info.dailyLimit))}</code> ترجمه به‌ازای هر کاربر</p>
+  <p class="hint">مدل فعال: <code>${escapeHtml(info.model)}</code> | سهمیهٔ روزانه: <code>${escapeHtml(String(info.dailyLimit))}</code> ترجمه به‌ازای هر کاربر</p>
 </div>
 
 ${
@@ -125,7 +125,7 @@ ${
     : `<div class="card">
          <h2>برای فعال‌شدن این دو کار مانده</h2>
          <ol>${todos}</ol>
-         <p class="hint">تنظیم secretها: <code>npx wrangler secret put NAME</code> · ساخت دیتابیس: <code>npx wrangler d1 create lyricson</code></p>
+         <p class="hint">تنظیم secretها: <code>npx wrangler secret put NAME</code> | ساخت دیتابیس: <code>npx wrangler d1 create lyricson</code></p>
        </div>`
 }
 
@@ -140,7 +140,7 @@ ${
 </div>
 
 <footer>
-  متن‌ها از <span class="mono">LRCLIB</span> · ترجمه با <span class="mono">${escapeHtml(info.baseUrl)}</span>
+  متن‌ها از <span class="mono">LRCLIB</span> | ترجمه با <span class="mono">${escapeHtml(info.baseUrl)}</span>
 </footer>`,
   );
 }

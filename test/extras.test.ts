@@ -136,13 +136,28 @@ describe('card renderers', () => {
   });
 
   it('keeps photo captions under the Telegram limit', () => {
-    const long = artistCaption('Artist', { caption: 'متن '.repeat(600), bio: 'x', sources: [] }, 1234567);
+    const long = artistCaption('Artist', 'متن '.repeat(600), 1234567);
     expect(long.length).toBeLessThanOrEqual(1024);
   });
 
   it('skips the long biography message when it adds nothing', () => {
     expect(artistBioDoc('A', { caption: 'same', bio: 'same', sources: [] })).toBeNull();
     expect(artistBioDoc('A', { caption: 'short', bio: 'long bio', sources: ['https://a.b/c'] })?.foot).toContain('a.b');
+  });
+});
+
+describe('artist output', () => {
+  it('detects whether a biography is Persian', async () => {
+    const { looksPersian } = await import('../src/lib/insights.js');
+    expect(looksPersian('کلدپلی یک گروه راک بریتانیایی است که در سال 1997 در لندن تشکیل شد.')).toBe(true);
+    expect(looksPersian('Coldplay are a British rock band formed in London in 1997.')).toBe(false);
+  });
+
+  it('puts a short biography into the photo caption and a long one into a separate article', async () => {
+    const { bioFitsCaption } = await import('../src/lib/cards.js');
+    expect(bioFitsCaption('A', { caption: 'c', bio: 'کوتاه', sources: [] })).toBe(true);
+    expect(bioFitsCaption('A', { caption: 'c', bio: 'متن '.repeat(600), sources: [] })).toBe(false);
+    expect(bioFitsCaption('A', { caption: 'c', bio: 'کوتاه', sources: ['https://a.b'] })).toBe(false);
   });
 });
 

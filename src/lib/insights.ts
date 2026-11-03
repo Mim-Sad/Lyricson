@@ -202,6 +202,33 @@ export async function buildVocabulary(
   return out;
 }
 
+/** True when most letters are Persian/Arabic script. */
+export function looksPersian(sample: string): boolean {
+  const letters = sample.match(/\p{L}/gu) ?? [];
+  if (letters.length < 12) return true; // too short to judge
+  return letters.filter((char) => /[\u0600-\u06FF]/.test(char)).length / letters.length >= 0.45;
+}
+
+const PERSIAN_RULE =
+  'Write ONLY in Persian (Farsi) script; proper names may stay in Latin script. Never answer in English.';
+
+/** One short, search-free request that turns English material into a Persian biography. */
+async function writePersianBio(ai: AiConfig, name: string, material: string): Promise<ArtistBio> {
+  const { data } = await ask(
+    ai,
+    `${SYSTEM_COMMON}\n${PERSIAN_RULE}`,
+    `Artist: ${name}\nMaterial (may be English):\n${material.slice(0, 2400)}\n\n` +
+      'Using only this material, return JSON: {"caption": string (one paragraph, max 700 chars), ' +
+      '"bio": string (2-4 short paragraphs separated by blank lines, max 1800 chars)}',
+    { maxTokens: 2500 },
+  );
+  const record = (data ?? {}) as Record<string, unknown>;
+  const bio = text(record.bio, 2400);
+  const caption = text(record.caption, 800) || bio.slice(0, 700);
+  if (!bio && !caption) throw new UserFacingError('اطلاعات کافی دربارهٔ این هنرمند پیدا نشد.', 'ARTIST_EMPTY');
+  return { caption, bio: bio || caption, sources: [] };
+}
+
 export async function buildArtistBio(ai: AiConfig, artist: ArtistInfo): Promise<ArtistBio> {
   const facts = [
     artist.wikiExtract ? `Wikipedia summary: ${artist.wikiExtract.slice(0, 1800)}` : '',
@@ -210,29 +237,46 @@ export async function buildArtistBio(ai: AiConfig, artist: ArtistInfo): Promise<
   ]
     .filter(Boolean)
     .join('\n');
-  const { data, sources } = await ask(
-    ai,
-    `${SYSTEM_COMMON}\nYou write accurate artist biographies. Prefer the supplied facts and web search results over memory.`,
-    `Artist: ${artist.name}\n${facts}\n\n` +
-      'Return JSON: {"caption": string (one tight paragraph, max 700 chars: who they are, genre, origin, what they are known for), ' +
-      '"bio": string (a complete biography in 3-5 short paragraphs separated by blank lines: early life and formation, career milestones and key albums, style and influences, notable achievements; max 2200 chars)}',
-    { web: true, maxTokens: 3500 },
-  );
-  const record = (data ?? {}) as Record<string, unknown>;
-  const bio = text(record.bio, 2600);
-  const caption = text(record.caption, 800) || bio.slice(0, 700);
-  if (!bio && !caption) {
-    throw new UserFacingError('اطلاعات کافی دربارهٔ این هنرمند پیدا نشد.', 'ARTIST_EMPTY');
-  }
   const wiki = artist.wikiUrl ? [artist.wikiUrl] : [];
-  return { caption, bio: bio || caption, sources: [...new Set([...wiki, ...sources])].slice(0, 4) };
+
+  let result: ArtistBio | null = null;
+  try {
+    // The model's own web search (OpenRouter plugin) finds interviews and articles; Wikipedia anchors the facts.
+    const { data, sources } = await ask(
+      ai,
+      `${SYSTEM_COMMON}\n${PERSIAN_RULE}\nYou write accurate artist biographies. Prefer the supplied facts and web search results over memory.`,
+      `Artist: ${artist.name}\n${facts}\n\n` +
+        'Return JSON: {"caption": string (one tight paragraph, max 700 chars: who they are, genre, origin, what they are known for), ' +
+        '"bio": string (a complete biography in 3-5 short paragraphs separated by blank lines: early life and formation, career milestones and key albums, style and influences, notable achievements; max 2200 chars)}',
+      { web: true, maxTokens: 3500 },
+    );
+    const record = (data ?? {}) as Record<string, unknown>;
+    const bio = text(record.bio, 2600);
+    const caption = text(record.caption, 800) || bio.slice(0, 700);
+    if (bio || caption) {
+      result = { caption, bio: bio || caption, sources: [...new Set([...wiki, ...sources])].slice(0, 4) };
+    }
+  } catch (error) {
+    if (error instanceof UserFacingError && ['AI_UNAUTHORIZED', 'AI_MODEL_NOT_FOUND'].includes(error.code)) throw error;
+  }
+
+  // The model sometimes answers in English; one cheap pass turns it into Persian.
+  if (result && !looksPersian(result.bio)) {
+    result = { ...(await writePersianBio(ai, artist.name, `${result.bio}\n${result.caption}`)), sources: result.sources };
+  }
+  if (result) return result;
+
+  // No usable answer: build a Persian bio from the facts we already hold.
+  const material = [artist.wikiExtract ?? '', artist.fans ? `Deezer fans: ${artist.fans}` : ''].filter(Boolean).join('\n');
+  if (!material) throw new UserFacingError('اطلاعات کافی دربارهٔ این هنرمند پیدا نشد.', 'ARTIST_EMPTY');
+  return { ...(await writePersianBio(ai, artist.name, material)), sources: wiki };
 }
 
-/** What we can say without the AI: Wikipedia's summary and Deezer's numbers. Better than nothing. */
+/** Last resort when even the model is unreachable: Wikipedia's summary as it is. Better than nothing. */
 export function fallbackArtistBio(artist: ArtistInfo): ArtistBio {
   const wiki = artist.wikiExtract?.trim() ?? '';
   const firstSentences = wiki.length > 700 ? `${wiki.slice(0, 700).replace(/\s+\S*$/, '')}…` : wiki;
-  const facts = artist.fans ? `${artist.name} — ${artist.fans.toLocaleString('en-US')} fans on Deezer.` : artist.name;
+  const facts = artist.fans ? `${artist.name} - ${artist.fans.toLocaleString('en-US')} fans on Deezer.` : artist.name;
   return {
     caption: firstSentences || facts,
     bio: wiki || facts,

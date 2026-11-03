@@ -8,21 +8,21 @@ export const BOT_NAME = 'Lyricson';
 
 export const WELCOME = `🎵 <b>${BOT_NAME}</b>
 متن موزیک + ترجمهٔ خط‌به‌خط، با معنی استعاره‌ها
-┄┄┄┄┄┄┄┄┄┄┄┄
+------------
 
 فقط یکی از این‌ها رو بفرست 👇
 
 🎼 <b>اسم موزیک</b>  <code>Coldplay Yellow</code>
-🔗 <b>لینک</b>  یوتیوب · اسپاتیفای · ساندکلاد · دیزر · اپل موزیک
+🔗 <b>لینک</b>  یوتیوب | اسپاتیفای | ساندکلاد | دیزر | اپل موزیک
 🎧 <b>فایل موزیک</b> یا 🎬 <b>ویدیو</b> (با کپشن)
 📜 <b>خودِ متن</b>  پیست کن
 
 بعد از متن اصلی، دکمهٔ <b>🇮🇷 ترجمهٔ خط‌به‌خط</b> رو بزن.
 
-/help راهنما · /lang زبان ترجمه`;
+/help راهنما | /lang زبان ترجمه`;
 
 export const HELP = `📖 <b>راهنما</b>
-┄┄┄┄┄┄┄┄┄┄┄┄
+------------
 
 <b>چطور کار می‌کنه؟</b>
 1. اسم، لینک، فایل یا متن موزیک رو بفرست.
@@ -35,8 +35,8 @@ export const HELP = `📖 <b>راهنما</b>
 • فایل موزیک بهتره تگ داشته باشه، وگرنه کپشن بذار.
 
 <b>دستورها</b>
-/lang — زبان ترجمه
-/help — همین راهنما`;
+/lang - زبان ترجمه
+/help - همین راهنما`;
 
 export const SEARCHING_FOR_LINK = '🔗 دارم اطلاعات لینک رو می‌گیرم…';
 export const SEARCHING = '🔎 یه لحظه، دارم متن رو پیدا می‌کنم…';
@@ -56,8 +56,8 @@ export function notFound(query: string): string {
 }
 
 export function candidatesHeader(query: string, page: number, pages: number, total: number): string {
-  const pageLine = pages > 1 ? ` · صفحهٔ ${faDigits(page)} از ${faDigits(pages)}` : '';
-  return `🔎 <b>نتایج «${escapeForMessage(query)}»</b>\n┄┄┄┄┄┄┄┄┄┄┄┄\n${faDigits(total)} مورد${pageLine}\nموزیک مورد نظرت رو انتخاب کن 👇`;
+  const pageLine = pages > 1 ? ` | صفحهٔ ${faDigits(page)} از ${faDigits(pages)}` : '';
+  return `🔎 <b>نتایج «${escapeForMessage(query)}»</b>\n------------\n${faDigits(total)} مورد${pageLine}\nموزیک مورد نظرت رو انتخاب کن 👇`;
 }
 
 export function noLyricsFound(track: { trackName: string; artistName: string }): string {
@@ -75,7 +75,7 @@ export function quotaReached(limit: number): string {
 export const ADMIN_HELP_SECTION = `
 
 <b>🛠 بخش ادمین</b>
-/admin — پنل مدیریت: هوش مصنوعی (سرویس، مدل، کلید)، زبان و سهمیه، کش، ادمین‌ها، حالت تعمیر و وبهوک.
+/admin - پنل مدیریت: هوش مصنوعی (سرویس، مدل، کلید)، زبان و سهمیه، کش، ادمین‌ها، حالت تعمیر و وبهوک.
 فقط آیدی‌های عددیِ ادمین به این بخش دسترسی دارند.`;
 
 export const MAINTENANCE = '🛠 ربات موقتاً در دست تعمیر است؛ کمی بعد دوباره امتحان کن.';
@@ -112,7 +112,7 @@ export const AI_NOT_CONFIGURED = `🔑 کلید هوش مصنوعی تنظیم �
 export function unknownFile(): string {
   return `🤔 از این فایل نتونستم اسم و خواننده رو تشخیص بدم.
 
-اسم موزیک رو به‌صورت متن یا به‌عنوان کپشن همین فایل بفرست — مثلاً:
+اسم موزیک رو به‌صورت متن یا به‌عنوان کپشن همین فایل بفرست - مثلاً:
 <code>Coldplay - Yellow</code>`;
 }
 

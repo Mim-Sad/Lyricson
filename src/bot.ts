@@ -195,7 +195,7 @@ export function createBot(env: Env, cfg: Config, botInfo?: UserFromGetMe): Bot {
   bot.on('message:text', async (ctx) => {
     const text = ctx.message.text.trim();
     if (text.startsWith('/')) {
-      await ctx.reply('این دستور رو نمی‌شناسم 🤔\nدستورها: /start · /help · /lang', HTML);
+      await ctx.reply('این دستور رو نمی‌شناسم 🤔\nدستورها: /start | /help | /lang', HTML);
       return;
     }
     // A pending admin prompt takes the next plain message as its value.
@@ -423,7 +423,7 @@ async function handleRequest(ctx: BotContext, env: Env, cfg: Config, input: Requ
   let hints = buildSearchHints({ ...(input.query ? { query: input.query } : {}), ...(input.title ? { title: input.title } : {}), ...(input.artist ? { artist: input.artist } : {}) });
   const displayQuery = input.query ?? [input.artist, input.title].filter(Boolean).join(' ');
   if (hints.length === 0) {
-    await settle(ctx, input.statusId, M.notFound(displayQuery || '—'));
+    await settle(ctx, input.statusId, M.notFound(displayQuery || '-'));
     return;
   }
 
@@ -472,7 +472,7 @@ async function handleRequest(ctx: BotContext, env: Env, cfg: Config, input: Requ
     }
     void react(ctx, '🤔');
     const anyTrack = found[0];
-    await settle(ctx, statusId, anyTrack ? M.noLyricsFound(anyTrack) : M.notFound(displayQuery || '—'));
+    await settle(ctx, statusId, anyTrack ? M.noLyricsFound(anyTrack) : M.notFound(displayQuery || '-'));
     return;
   }
 

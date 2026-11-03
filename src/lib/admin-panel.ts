@@ -217,13 +217,13 @@ function homePanel(snapshot: SettingsSnapshot, cfg: Config): AdminPanel {
   const lines = [
     '🛠 <b>پنل مدیریت Lyricson</b>',
     `👮 ادمین‌ها: ${faDigits(snapshot.adminIds.length)} نفر`,
-    snapshot.maintenance ? '⏸ <b>حالت تعمیر روشن است</b> — کاربران عادی پاسخی نمی‌گیرند.' : '',
+    snapshot.maintenance ? '⏸ <b>حالت تعمیر روشن است</b> - کاربران عادی پاسخی نمی‌گیرند.' : '',
     '',
     '<b>هوش مصنوعی</b>',
     `• سرویس: <b>${escapeHtml(preset.label)}</b>`,
-    `• مدل: <code>${escapeHtml(snapshot.ai.model || '—')}</code>${sourceTag(snapshot, 'ai_model')}`,
+    `• مدل: <code>${escapeHtml(snapshot.ai.model || '-')}</code>${sourceTag(snapshot, 'ai_model')}`,
     `• کلید: ${keyLine(snapshot)}`,
-    `• آدرس: <code>${escapeHtml(snapshot.ai.baseUrl || '—')}</code>`,
+    `• آدرس: <code>${escapeHtml(snapshot.ai.baseUrl || '-')}</code>`,
     '',
     '<b>پیش‌فرض‌های ربات</b>',
     `• زبان مقصد: <b>${escapeHtml(language.nativeName)}</b>${sourceTag(snapshot, 'default_target_lang')}`,
@@ -271,9 +271,9 @@ function aiPanel(snapshot: SettingsSnapshot): AdminPanel {
     '🤖 <b>هوش مصنوعی</b>',
     '',
     `• سرویس: <b>${escapeHtml(preset.label)}</b>`,
-    `• مدل: <code>${escapeHtml(snapshot.ai.model || '—')}</code>${sourceTag(snapshot, 'ai_model')}`,
+    `• مدل: <code>${escapeHtml(snapshot.ai.model || '-')}</code>${sourceTag(snapshot, 'ai_model')}`,
     `• کلید: ${keyLine(snapshot)}`,
-    `• آدرس: <code>${escapeHtml(snapshot.ai.baseUrl || '—')}</code>`,
+    `• آدرس: <code>${escapeHtml(snapshot.ai.baseUrl || '-')}</code>`,
     '',
     '<i>OpenRouter با همین آدرس و کلید کار می‌کند. اگر سرویس دیگری داری، آدرس سازگار با OpenAI را بفرست (مثلاً https://host/v1).</i>',
   ];
@@ -303,9 +303,9 @@ function providersPanel(snapshot: SettingsSnapshot): AdminPanel {
     '',
     'یکی از سرویس‌های زیر را انتخاب کن. با انتخاب OpenRouter، آدرس و یک مدل پیشنهادی هم خودکار تنظیم می‌شود.',
     '',
-    '• <b>OpenRouter</b> — یک کلید برای صدها مدل؛ مناسب این کار.',
-    '• <b>Freebuff API</b> — پیش‌فرض قبلی؛ کلید از حساب Freebuff.',
-    '• <b>سرویس دلخواه</b> — هر endpoint سازگار با OpenAI (آدرس و مدل را خودت می‌دهی).',
+    '• <b>OpenRouter</b> - یک کلید برای صدها مدل؛ مناسب این کار.',
+    '• <b>Freebuff API</b> - پیش‌فرض قبلی؛ کلید از حساب Freebuff.',
+    '• <b>سرویس دلخواه</b> - هر endpoint سازگار با OpenAI (آدرس و مدل را خودت می‌دهی).',
   ].join('\n');
   return { text, keyboard };
 }
@@ -323,7 +323,7 @@ function modelsPanel(snapshot: SettingsSnapshot): AdminPanel {
   const text = [
     '🧠 <b>مدل</b>',
     `سرویس: <b>${escapeHtml(preset.label)}</b>`,
-    `مدل فعلی: <code>${escapeHtml(snapshot.ai.model || '—')}</code>`,
+    `مدل فعلی: <code>${escapeHtml(snapshot.ai.model || '-')}</code>`,
     '',
     preset.models.length > 0
       ? 'یکی از مدل‌های پیشنهادی را بزن یا شناسهٔ دقیق مدل را خودت بفرست.'

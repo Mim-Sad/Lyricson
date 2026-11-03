@@ -37,7 +37,7 @@ export function lyricsPage(args: {
   languageName?: string;
 }): string {
   const { track, translation, mode, id } = args;
-  const meta = [track.artistName, track.albumName].filter(Boolean).map((part) => esc(part as string)).join(' · ');
+  const meta = [track.artistName, track.albumName].filter(Boolean).map((part) => esc(part as string)).join(' | ');
 
   let body: string;
   let info = '';
@@ -51,7 +51,7 @@ export function lyricsPage(args: {
       )
       .join('\n');
     const bits = [translation.theme ? `🧠 ${esc(translation.theme)}` : '', translation.mood ? `💫 ${esc(translation.mood)}` : ''].filter(Boolean);
-    if (bits.length > 0) info = `<div class="info">${bits.join(' &nbsp;·&nbsp; ')}</div>`;
+    if (bits.length > 0) info = `<div class="info">${bits.join(' &nbsp;|&nbsp; ')}</div>`;
   } else {
     body = `<pre>${esc(track.lyrics ?? '')}</pre>`;
     if (mode === 'translation') {
@@ -65,7 +65,7 @@ export function lyricsPage(args: {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
-<title>${esc(track.trackName)} — ${esc(track.artistName)}</title>
+<title>${esc(track.trackName)} - ${esc(track.artistName)}</title>
 <style>${STYLES}</style>
 </head>
 <body>

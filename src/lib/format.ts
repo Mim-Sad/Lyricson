@@ -21,7 +21,7 @@ export function escapeHtml(input: string): string {
   return latinDigits(input).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-const RULE = '┄┄┄┄┄┄┄┄┄┄┄┄';
+const RULE = '------------';
 
 const SOURCE_LABELS: Record<TrackSummary['source'], string> = {
   lrclib: 'LRCLIB',
@@ -253,7 +253,7 @@ export function candidateKeyboard(
 
   slice.forEach((track, position) => {
     const index = safePage * pageSize + position;
-    const label = `${faDigits(index + 1)}. ${truncate(`${track.trackName} — ${track.artistName}`, 52)}`;
+    const label = `${faDigits(index + 1)}. ${truncate(`${track.trackName} - ${track.artistName}`, 52)}`;
     keyboard.text(label, `s:${sessionId}:${index}`).row();
   });
 
@@ -275,7 +275,7 @@ export function lyricsKeyboard(
   options: { languageName: string; searchSessionId?: string },
 ): InlineKeyboard {
   const keyboard = styled(
-    new InlineKeyboard().text(`🇮🇷 ترجمهٔ خط‌به‌خط · ${options.languageName}`, `t:${sessionId}:0`),
+    new InlineKeyboard().text(`🇮🇷 ترجمهٔ خط‌به‌خط | ${options.languageName}`, `t:${sessionId}:0`),
     'primary',
   );
   keyboard

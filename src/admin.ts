@@ -202,7 +202,7 @@ export async function handleAdminCallback(
       const lines = [
         result.ok ? '✅ <b>اتصال برقرار است</b>' : '⛔️ <b>تست ناموفق بود</b>',
         `سرویس: <b>${escapeHtml(AI_PROVIDERS[snapshot.ai.provider].label)}</b>`,
-        `مدل: <code>${escapeHtml(result.model || '—')}</code>`,
+        `مدل: <code>${escapeHtml(result.model || '-')}</code>`,
         `زمان: ${faDigits(result.latencyMs)} میلی‌ثانیه`,
         ...(result.detail ? [`پاسخ: <code>${escapeHtml(result.detail)}</code>`] : []),
       ];
@@ -228,14 +228,14 @@ export async function handleAdminCallback(
         '🩺 <b>تشخیص</b>',
         '',
         `${mark(me.ok)} تلگرام: ${escapeHtml(me.ok ? `@${me.result?.username ?? '?'}` : (me.description ?? 'خطا'))}`,
-        `${mark(Boolean(hook.result?.url))} وبهوک: <code>${escapeHtml(hook.result?.url ?? '—')}</code>${
+        `${mark(Boolean(hook.result?.url))} وبهوک: <code>${escapeHtml(hook.result?.url ?? '-')}</code>${
           hook.result?.last_error_message ? `\n   ⚠️ ${escapeHtml(hook.result.last_error_message)}` : ''
         }`,
         `${mark(lyrics.ok)} LRCLIB (جست‌وجوی متن): ${escapeHtml(lyrics.detail)}`,
         `${mark(backup.ok)} lyrics.ovh (منبع دوم): ${escapeHtml(backup.detail)}`,
         `${mark(rich.ok)} Rich messages: ${escapeHtml(rich.detail)}`,
-        `${mark(ai.ok)} هوش مصنوعی (<code>${escapeHtml(ai.model || '—')}</code>): ${escapeHtml(ai.detail ?? '')}`,
-        `کلید: ${snapshot.ai.apiKey ? '✅ ثبت شده' : '⛔️ ثبت نشده'} · ادمین‌ها: ${faDigits(snapshot.adminIds.length)}`,
+        `${mark(ai.ok)} هوش مصنوعی (<code>${escapeHtml(ai.model || '-')}</code>): ${escapeHtml(ai.detail ?? '')}`,
+        `کلید: ${snapshot.ai.apiKey ? '✅ ثبت شده' : '⛔️ ثبت نشده'} | ادمین‌ها: ${faDigits(snapshot.adminIds.length)}`,
       ];
       await ctx.reply(lines.join('\n'), {
         ...HTML,
@@ -274,7 +274,7 @@ export async function handleAdminCallback(
         env,
         cfg,
         'home',
-        `🧹 کش پاک شد — ${faDigits(before.translations)} ترجمه و ${faDigits(before.lyrics)} متن.`,
+        `🧹 کش پاک شد - ${faDigits(before.translations)} ترجمه و ${faDigits(before.lyrics)} متن.`,
       );
       return true;
     }
@@ -286,7 +286,7 @@ export async function handleAdminCallback(
         env,
         cfg,
         'cache',
-        `🧹 منقضی‌ها پاک شدند — ${faDigits(removed.translations)} ترجمه و ${faDigits(removed.lyrics)} متن.`,
+        `🧹 منقضی‌ها پاک شدند - ${faDigits(removed.translations)} ترجمه و ${faDigits(removed.lyrics)} متن.`,
       );
       return true;
     }
@@ -350,7 +350,7 @@ export async function handleAdminCallback(
       const left = (await userCounts(env.DB, id).catch(() => undefined))?.pending ?? 0;
       const summary = fatal
         ? `⛔️ ارسال متوقف شد: ${escapeHtml(fatal)}`
-        : `📣 ارسال شد: ${sent} · ناموفق/بلاک: ${blocked}${left > 0 ? ` · باقی‌مانده: ${left} (دوباره «ارسال» را بزن)` : ' · تمام شد ✅'}`;
+        : `📣 ارسال شد: ${sent} | ناموفق/بلاک: ${blocked}${left > 0 ? ` | باقی‌مانده: ${left} (دوباره «ارسال» را بزن)` : ' | تمام شد ✅'}`;
       await refresh(ctx, env, cfg, 'broadcast', summary);
       return true;
     }
@@ -478,7 +478,7 @@ export async function handleAdminText(
         env,
         cfg,
         'ai',
-        `✅ کلید ذخیره شد: <code>${escapeHtml(maskSecret(value))}</code> — دیگر با هیچ پیامی فرستاده نمی‌شود.`,
+        `✅ کلید ذخیره شد: <code>${escapeHtml(maskSecret(value))}</code> - دیگر با هیچ پیامی فرستاده نمی‌شود.`,
       );
       return true;
     }
