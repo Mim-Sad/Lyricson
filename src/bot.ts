@@ -7,12 +7,14 @@ import { Bot, InlineKeyboard, type Context } from 'grammy';
 import type { UserFromGetMe } from 'grammy/types';
 import { handleAdminCallback, handleAdminCommand, handleAdminText } from './admin.js';
 import {
+  deliver,
   metaOf,
   musicInfoFor,
   onCard,
   onInsight,
   sendPreviewAudio,
   sendStatus,
+  setRichEnabled,
   settle,
   shareIdFor,
   trackOfSession,
@@ -37,6 +39,7 @@ import {
 import { buildFileInput, detectUrl, fetchId3Tags, resolveLink, type AudioMetadata } from './lib/identify.js';
 import { languageFor, TARGET_LANGUAGES } from './lib/languages.js';
 import { resolveCanonical } from './lib/music.js';
+import { lyricsRich, translationRich } from './lib/rich.js';
 import { getTrackById, getTrackByMetadata, searchTracks } from './lib/lyrics.js';
 import * as M from './lib/messages.js';
 import { toSourceLines, type Translation } from './lib/prompt.js';
@@ -100,6 +103,7 @@ export function createBot(env: Env, cfg: Config, botInfo?: UserFromGetMe): Bot {
     const settings = await loadSettings(env, cfg);
     if (ctx.from && ctx.chat?.type === 'private') await touchUser(env.DB, ctx.from);
     cfg.adminUserIds = settings.adminIds;
+    setRichEnabled(settings.richMessages);
     applyCachePolicy({
       enabled: settings.cache.enabled,
       translationTtl: settings.cache.translationDays * 86_400,
@@ -520,21 +524,17 @@ async function sendTrack(
     payload: { track, ...(searchSessionId ? { searchSid: searchSessionId } : {}) },
   });
 
-  const chunks = paginate(lyricsDoc(track, metaOf(track, info)), { plainBlocks: true });
-  let lastMessageId: number | undefined;
-  for (const [index, chunk] of chunks.entries()) {
-    const isLast = index === chunks.length - 1;
-    const extra = isLast
-      ? {
-          reply_markup: lyricsKeyboard(sessionId, {
-            languageName: language.nativeName,
-            ...(searchSessionId ? { searchSessionId } : {}),
-          }),
-        }
-      : {};
-    // The first chunk replaces the "searching…" message; the rest follow as new messages.
-    lastMessageId = await settle(ctx, index === 0 ? statusForLyrics : undefined, chunk, extra);
-  }
+  const meta = metaOf(track, info);
+  // Rich (article-style) message first; the classic HTML renderer is the fallback.
+  const lastMessageId = await deliver(ctx, {
+    ...(statusForLyrics ? { statusId: statusForLyrics } : {}),
+    keyboard: lyricsKeyboard(sessionId, {
+      languageName: language.nativeName,
+      ...(searchSessionId ? { searchSessionId } : {}),
+    }),
+    classic: paginate(lyricsDoc(track, meta), { plainBlocks: true }),
+    rich: lyricsRich(track, meta),
+  });
   if (lastMessageId !== undefined) await setSessionMessageId(env.DB, sessionId, lastMessageId);
   // The audio went out as its own message, so the "searching…" placeholder is no longer needed.
   if (audioSent && options.statusId) await ctx.api.deleteMessage(chatId, options.statusId).catch(() => undefined);
@@ -558,7 +558,11 @@ async function openShared(ctx: BotContext, env: Env, cfg: Config, wantTranslatio
   const settings = await loadSettings(env, cfg);
   const info = await withTimeout(musicInfoFor(env, settings, share.track), 3000);
   const doc = translationDoc(share.track, share.translation, languageFor(share.language ?? 'fa').nativeName, metaOf(share.track, info));
-  for (const chunk of paginate(doc)) await ctx.reply(chunk, HTML);
+  const meta = metaOf(share.track, info);
+  await deliver(ctx, {
+    classic: paginate(doc),
+    rich: translationRich(share.track, share.translation, languageFor(share.language ?? 'fa').nativeName, meta),
+  });
 }
 
 async function showCandidates(
@@ -723,10 +727,18 @@ async function onTranslate(ctx: BotContext, env: Env, cfg: Config, session: Sess
     );
     const doc = translationDoc(track, translation, language.nativeName, metaOf(track, info));
     if (translation.missing > 0) doc.foot = `${M.partialNotice(translation.missing).trim()}\n${doc.foot}`;
-    const chunks = paginate(doc);
-    for (const [index, chunk] of chunks.entries()) {
-      await settle(ctx, index === 0 ? placeholderId : undefined, chunk, replyTo ? { replyTo } : {});
-    }
+    await deliver(ctx, {
+      ...(placeholderId ? { statusId: placeholderId } : {}),
+      ...(replyTo ? { replyTo } : {}),
+      classic: paginate(doc),
+      rich: translationRich(
+        track,
+        translation,
+        language.nativeName,
+        metaOf(track, info),
+        translation.missing > 0 ? M.partialNotice(translation.missing).trim() : '',
+      ),
+    });
   } catch (error) {
     logError('translate', error, { userId, track: track.trackName });
     // A failed AI call must not cost the user a translation from today's quota.

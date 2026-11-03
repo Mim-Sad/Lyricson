@@ -145,3 +145,11 @@ export const ARTIST_WORKING = '👤 دارم دربارهٔ هنرمند تحق�
 
 export const SHARE_MISSING = '😕 این کارت دیگر در دسترس نیست؛ اسم موزیک را دوباره بفرست.';
 export const NO_TRANSLATION_YET = '🌐 هنوز ترجمه‌ای برای این موزیک ساخته نشده؛ متن را می‌فرستم و با دکمهٔ «ترجمه» می‌توانی بگیری.';
+
+export function confidenceLabel(level: 'high' | 'medium' | 'low'): string {
+  return level === 'high'
+    ? '✅ مبتنی بر منابع پیدا‌شده'
+    : level === 'low'
+      ? '⚠️ اطلاعات محدود بود؛ با احتیاط بخوان'
+      : '〰️ ترکیبی از منابع و دانش عمومی';
+}
