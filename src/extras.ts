@@ -41,7 +41,7 @@ function chatIdOf(ctx: Context): number | null {
   return ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id ?? null;
 }
 
-type Extra = { reply_markup?: InlineKeyboard; replyTo?: number };
+type Extra = { reply_markup?: InlineKeyboard; replyTo?: number; effect?: string };
 
 function replyParams(replyTo?: number): { reply_parameters?: { message_id: number; allow_sending_without_reply: true } } {
   return replyTo ? { reply_parameters: { message_id: replyTo, allow_sending_without_reply: true } } : {};
@@ -81,8 +81,15 @@ export async function settle(
     }
   }
   try {
-    const sent = await ctx.reply(text, { ...HTML, ...markup, ...replyParams(extra.replyTo) });
-    return sent.message_id;
+    try {
+      const sent = await ctx.reply(text, { ...HTML, ...markup, ...replyParams(extra.replyTo), ...effectParams(ctx, extra.effect) });
+      return sent.message_id;
+    } catch (error) {
+      // An invalid or unsupported effect must never cost the message itself.
+      if (!extra.effect || parseFailure(error)) throw error;
+      const sent = await ctx.reply(text, { ...HTML, ...markup, ...replyParams(extra.replyTo) });
+      return sent.message_id;
+    }
   } catch (error) {
     if (!parseFailure(error)) throw error;
     logError('settle.reply', error);
@@ -92,6 +99,34 @@ export async function settle(
       ...replyParams(extra.replyTo),
     });
     return sent.message_id;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Reactions and message effects (free, private chats only)
+// ---------------------------------------------------------------------------
+
+let flairEnabled = true;
+
+export function setFlairEnabled(value: boolean): void {
+  flairEnabled = value;
+}
+
+/** Telegram's built-in full-screen message effects. */
+export const EFFECTS = { party: '5046509860389126442', fire: '5104841245755180586' } as const;
+
+function effectParams(ctx: Context, effect?: string): { message_effect_id?: string } {
+  return flairEnabled && effect && ctx.chat?.type === 'private' ? { message_effect_id: effect } : {};
+}
+
+/** Reacts to the user's own message ("seen it", "done"); silently skipped when unsupported. */
+export async function react(ctx: Context, emoji: '👀' | '🔥' | '🤔' | '🎉'): Promise<void> {
+  const message = ctx.message;
+  if (!flairEnabled || !message || ctx.chat?.type !== 'private') return;
+  try {
+    await ctx.api.setMessageReaction(ctx.chat.id, message.message_id, [{ type: 'emoji', emoji }] as never);
+  } catch (error) {
+    logError('react', error);
   }
 }
 
@@ -125,6 +160,11 @@ export function setRichEnabled(value: boolean): void {
   richEnabled = value;
 }
 
+/** Forgets a previous "method not found" so rich messages are tried again (also used by tests). */
+export function resetRichBackoff(): void {
+  richRetryAt = 0;
+}
+
 export function richAvailable(): boolean {
   return richEnabled && Date.now() >= richRetryAt;
 }
@@ -134,7 +174,7 @@ type RawApi = Record<string, (payload: unknown) => Promise<{ message_id: number 
 async function sendRichPart(
   ctx: Context,
   part: RichPart,
-  options: { statusId?: number; replyTo?: number; keyboard?: InlineKeyboard },
+  options: { statusId?: number; replyTo?: number; keyboard?: InlineKeyboard; effect?: string },
 ): Promise<number | null> {
   const chatId = chatIdOf(ctx);
   if (!chatId || !richAvailable()) return null;
@@ -158,7 +198,19 @@ async function sendRichPart(
     }
   }
   try {
-    const sent = await raw.sendRichMessage?.({ chat_id: chatId, rich_message, ...markup, ...replyParams(options.replyTo) });
+    let sent: { message_id: number } | undefined;
+    try {
+      sent = await raw.sendRichMessage?.({
+        chat_id: chatId,
+        rich_message,
+        ...markup,
+        ...replyParams(options.replyTo),
+        ...effectParams(ctx, options.effect),
+      });
+    } catch (error) {
+      if (!options.effect) throw error;
+      sent = await raw.sendRichMessage?.({ chat_id: chatId, rich_message, ...markup, ...replyParams(options.replyTo) });
+    }
     if (!sent) return null;
     if (options.statusId) await ctx.api.deleteMessage(chatId, options.statusId).catch(() => undefined);
     return sent.message_id;
@@ -180,6 +232,8 @@ export async function deliver(
     statusId?: number;
     replyTo?: number;
     keyboard?: InlineKeyboard;
+    /** A full-screen message effect (private chats only). */
+    effect?: string;
     classic: string[];
     rich?: RichPart[];
   },
@@ -191,6 +245,7 @@ export async function deliver(
       ...(options.statusId ? { statusId: options.statusId } : {}),
       ...(options.replyTo ? { replyTo: options.replyTo } : {}),
       ...(rich.length === 1 && options.keyboard ? { keyboard: options.keyboard } : {}),
+      ...(options.effect ? { effect: options.effect } : {}),
     });
     if (firstId !== null) {
       let last = firstId;
@@ -213,6 +268,7 @@ export async function deliver(
     last = await settle(ctx, index === 0 ? options.statusId : undefined, chunk, {
       ...(isLast && options.keyboard ? { reply_markup: options.keyboard } : {}),
       ...(options.replyTo ? { replyTo: options.replyTo } : {}),
+      ...(index === 0 && options.effect ? { effect: options.effect } : {}),
     });
   }
   return last;

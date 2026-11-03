@@ -27,7 +27,8 @@ export type SettingKey =
   | 'spotify_client_secret'
   | 'broadcast_draft'
   | 'broadcast_id'
-  | 'rich_messages';
+  | 'rich_messages'
+  | 'flair';
 
 export const SETTING_KEYS: readonly SettingKey[] = [
   'ai_provider',
@@ -48,6 +49,7 @@ export const SETTING_KEYS: readonly SettingKey[] = [
   'broadcast_draft',
   'broadcast_id',
   'rich_messages',
+  'flair',
 ];
 
 /** 0 = never expires. */
@@ -72,6 +74,8 @@ export interface SettingsSnapshot {
   broadcast: { draft: string; id: string };
   /** Article-style rich messages (Bot API 10.1+); the classic HTML renderer is used when off or unsupported. */
   richMessages: boolean;
+  /** Reactions on the user's message and message effects. */
+  flair: boolean;
   /** While true, everyone except admins gets a "back soon" message. */
   maintenance: boolean;
   /** Keys currently overridden by the admin panel rather than env. */
@@ -136,6 +140,7 @@ export function mergeSettings(
   if (clean(stored.spotify_client_id)) fromDb.push('spotify_client_id');
   if (clean(stored.spotify_client_secret)) fromDb.push('spotify_client_secret');
   if (stored.rich_messages === 'off') fromDb.push('rich_messages');
+  if (stored.flair === 'off') fromDb.push('flair');
   if (stored.cache_enabled === 'off') fromDb.push('cache_enabled');
   if (positiveInt(stored.cache_translation_days)) fromDb.push('cache_translation_days');
   if (positiveInt(stored.cache_lyrics_days)) fromDb.push('cache_lyrics_days');
@@ -158,6 +163,7 @@ export function mergeSettings(
     cache,
     maintenance: clean(stored.maintenance) === 'on',
     richMessages: clean(stored.rich_messages) !== 'off',
+    flair: clean(stored.flair) !== 'off',
     broadcast: { draft: stored.broadcast_draft ?? '', id: clean(stored.broadcast_id) ?? '' },
     ...(spotifyId && spotifySecret ? { spotify: { id: spotifyId, secret: spotifySecret } } : {}),
     fromDb,

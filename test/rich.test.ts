@@ -106,3 +106,51 @@ describe('deliver', () => {
     setRichEnabled(true);
   });
 });
+
+describe('welcome, reactions and effects', () => {
+  it('builds the rich welcome with a list, an aside and a footer', async () => {
+    const { welcomeRich, helpRich } = await import('../src/lib/rich.js');
+    const html = welcomeRich()[0]?.html ?? '';
+    expect(html).toContain('<h1>🎵 Lyricson</h1>');
+    expect(html).toContain('<ul>');
+    expect(html).toContain('<aside>');
+    expect(html).toContain('<footer>/help');
+    expect(helpRich('quota 3/40', true)[0]?.html).toContain('/admin');
+    expect(helpRich('quota 3/40', false)[0]?.html).not.toContain('/admin');
+  });
+
+  it('retries without the effect when Telegram rejects it', async () => {
+    const { EFFECTS, resetRichBackoff, setFlairEnabled } = await import('../src/extras.js');
+    resetRichBackoff();
+    setRichEnabled(true);
+    setFlairEnabled(true);
+    const calls: unknown[] = [];
+    const sendRichMessage = vi.fn(async (payload: Record<string, unknown>) => {
+      calls.push(payload);
+      if (payload.message_effect_id) throw new Error('Bad Request: message effect invalid');
+      return { message_id: 11 };
+    });
+    const reply = vi.fn();
+    const ctx = { chat: { id: 1, type: 'private' }, reply, api: { raw: { sendRichMessage } } } as never;
+    const id = await deliver(ctx, { classic: ['x'], rich: [{ html: '<p>hi</p>', rtl: true }], effect: EFFECTS.party });
+    expect(id).toBe(11);
+    expect(calls).toHaveLength(2);
+    expect((calls[1] as Record<string, unknown>).message_effect_id).toBeUndefined();
+  });
+
+  it('reacts only in private chats and never throws', async () => {
+    const { react, setFlairEnabled } = await import('../src/extras.js');
+    setFlairEnabled(true);
+    const setMessageReaction = vi.fn(async () => true);
+    await react({ message: { message_id: 5 }, chat: { id: 1, type: 'private' }, api: { setMessageReaction } } as never, '👀');
+    expect(setMessageReaction).toHaveBeenCalledWith(1, 5, [{ type: 'emoji', emoji: '👀' }]);
+    await react({ message: { message_id: 5 }, chat: { id: -1, type: 'group' }, api: { setMessageReaction } } as never, '👀');
+    expect(setMessageReaction).toHaveBeenCalledOnce();
+    const failing = vi.fn(async () => {
+      throw new Error('REACTION_INVALID');
+    });
+    await expect(
+      react({ message: { message_id: 5 }, chat: { id: 1, type: 'private' }, api: { setMessageReaction: failing } } as never, '🔥'),
+    ).resolves.toBeUndefined();
+  });
+});

@@ -59,6 +59,7 @@ export type AdminAction =
   | { kind: 'pruneCache' }
   | { kind: 'toggleCache' }
   | { kind: 'toggleRich' }
+  | { kind: 'toggleFlair' }
   | { kind: 'broadcastSend' }
   | { kind: 'broadcastTest' }
   | { kind: 'broadcastClear' }
@@ -85,6 +86,7 @@ export const SETTING_LABELS: Record<SettingKey, string> = {
   broadcast_draft: 'پیش‌نویس اطلاع‌رسانی',
   broadcast_id: 'شناسهٔ اطلاع‌رسانی',
   rich_messages: 'پیام‌های Rich',
+  flair: 'واکنش و افکت',
 };
 
 /** Settings the reset screen may clear (admins, maintenance and webhook state have their own controls). */
@@ -100,6 +102,7 @@ const RESETTABLE: readonly SettingKey[] = [
   'cache_translation_days',
   'cache_lyrics_days',
   'rich_messages',
+  'flair',
   'spotify_client_id',
   'spotify_client_secret',
 ];
@@ -161,6 +164,8 @@ export function parseAdminCallback(data: string): AdminAction | null {
       return { kind: 'toggleCache' };
     case 'tr':
       return { kind: 'toggleRich' };
+    case 'tf':
+      return { kind: 'toggleFlair' };
     case 'bcsend':
       return { kind: 'broadcastSend' };
     case 'bctest':
@@ -225,6 +230,7 @@ function homePanel(snapshot: SettingsSnapshot, cfg: Config): AdminPanel {
     `• سهمیهٔ روزانه: <b>${faDigits(snapshot.dailyLimit)}</b> ترجمه برای هر کاربر${sourceTag(snapshot, 'daily_limit')}`,
     `• کش: ${snapshot.cache.enabled ? '✅ روشن' : '⛔️ خاموش'}`,
     `• پیام‌های Rich (قالب مقاله‌ای تلگرام): ${snapshot.richMessages ? '✅ روشن' : '⛔️ خاموش'}`,
+    `• واکنش به پیام کاربر و افکت پیام: ${snapshot.flair ? '✅ روشن' : '⛔️ خاموش'}`,
     '',
     '<i>هر تغییری این‌جا بدهی همان لحظه اعمال می‌شود و بر مقادیر env اولویت دارد؛ با «بازگشت به پیش‌فرض‌های env» می‌توانی هر مقدار را پاک کنی.</i>',
   ];
@@ -251,6 +257,8 @@ function homePanel(snapshot: SettingsSnapshot, cfg: Config): AdminPanel {
     .row()
     .text(snapshot.maintenance ? '▶️ پایان حالت تعمیر' : '⏸ حالت تعمیر', 'a:tm')
     .text(snapshot.richMessages ? '✨ Rich: روشن' : '✨ Rich: خاموش', 'a:tr')
+    .row()
+    .text(snapshot.flair ? '👀 واکنش/افکت: روشن' : '👀 واکنش/افکت: خاموش', 'a:tf')
     .row()
     .text('♻️ بازگشت به پیش‌فرض‌های env', 'a:reset');
 
