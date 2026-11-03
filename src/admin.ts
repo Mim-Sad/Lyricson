@@ -355,6 +355,13 @@ export async function handleAdminCallback(
       return true;
     }
 
+    case 'toggleFlair': {
+      const snapshot = await loadSettings(env, cfg, { fresh: true });
+      await saveSetting(env, 'flair', snapshot.flair ? 'off' : null);
+      await refresh(ctx, env, cfg, 'home', snapshot.flair ? '👀 واکنش و افکت خاموش شد.' : '👀 واکنش و افکت روشن شد.');
+      return true;
+    }
+
     case 'toggleRich': {
       const snapshot = await loadSettings(env, cfg, { fresh: true });
       await saveSetting(env, 'rich_messages', snapshot.richMessages ? 'off' : null);

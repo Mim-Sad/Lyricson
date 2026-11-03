@@ -13,8 +13,11 @@ import {
   onCard,
   onInsight,
   sendPreviewAudio,
+  react,
   sendStatus,
+  setFlairEnabled,
   setRichEnabled,
+  EFFECTS,
   settle,
   shareIdFor,
   trackOfSession,
@@ -39,7 +42,7 @@ import {
 import { buildFileInput, detectUrl, fetchId3Tags, resolveLink, type AudioMetadata } from './lib/identify.js';
 import { languageFor, TARGET_LANGUAGES } from './lib/languages.js';
 import { resolveCanonical } from './lib/music.js';
-import { lyricsRich, translationRich } from './lib/rich.js';
+import { helpRich, lyricsRich, translationRich, welcomeRich } from './lib/rich.js';
 import { getTrackById, getTrackByMetadata, searchTracks } from './lib/lyrics.js';
 import * as M from './lib/messages.js';
 import { toSourceLines, type Translation } from './lib/prompt.js';
@@ -104,6 +107,7 @@ export function createBot(env: Env, cfg: Config, botInfo?: UserFromGetMe): Bot {
     if (ctx.from && ctx.chat?.type === 'private') await touchUser(env.DB, ctx.from);
     cfg.adminUserIds = settings.adminIds;
     setRichEnabled(settings.richMessages);
+    setFlairEnabled(settings.flair);
     applyCachePolicy({
       enabled: settings.cache.enabled,
       translationTtl: settings.cache.translationDays * 86_400,
@@ -161,22 +165,23 @@ export function createBot(env: Env, cfg: Config, botInfo?: UserFromGetMe): Bot {
       await openShared(ctx, env, cfg, shared[1] === 't', shared[2] ?? '');
       return;
     }
-    if (isAdmin(cfg, ctx.from?.id)) {
-      await ctx.reply(M.WELCOME, {
-        ...HTML,
-        reply_markup: new InlineKeyboard().text('🛠 پنل مدیریت', 'a:home'),
-      });
-      return;
-    }
-    await ctx.reply(M.WELCOME, HTML);
+    await deliver(ctx, {
+      classic: [M.WELCOME],
+      rich: welcomeRich(),
+      effect: EFFECTS.party,
+      ...(isAdmin(cfg, ctx.from?.id) ? { keyboard: new InlineKeyboard().text('🛠 پنل مدیریت', 'a:home') } : {}),
+    });
   });
 
   bot.command('help', async (ctx) => {
     const settings = await loadSettings(env, cfg);
     const used = await quotaUsed(env.DB, userIdOf(ctx));
     const quota = `\n\n🔋 سهمیهٔ امروز: ${faDigits(used)} از ${faDigits(settings.dailyLimit)}`;
-    const admin = isAdmin(cfg, ctx.from?.id) ? M.ADMIN_HELP_SECTION : '';
-    await ctx.reply(M.HELP + quota + admin, HTML);
+    const admin = isAdmin(cfg, ctx.from?.id);
+    await deliver(ctx, {
+      classic: [M.HELP + quota + (admin ? M.ADMIN_HELP_SECTION : '')],
+      rich: helpRich(`🔋 سهمیهٔ امروز: ${used} از ${settings.dailyLimit}`, admin),
+    });
   });
 
   bot.command('lang', async (ctx) => {
@@ -423,6 +428,7 @@ async function handleRequest(ctx: BotContext, env: Env, cfg: Config, input: Requ
   }
 
   // Answer instantly; the real result edits this message when it is ready.
+  void react(ctx, '👀');
   const statusId = input.statusId ?? (await sendStatus(ctx, M.SEARCHING));
 
   // A free-text query ("Truce twenty one pilots") is first resolved to a clean
@@ -464,6 +470,7 @@ async function handleRequest(ctx: BotContext, env: Env, cfg: Config, input: Requ
       await settle(ctx, statusId, M.LYRICS_BUSY, retrySession ? { reply_markup: retryKeyboard('y', retrySession) } : {});
       return;
     }
+    void react(ctx, '🤔');
     const anyTrack = found[0];
     await settle(ctx, statusId, anyTrack ? M.noLyricsFound(anyTrack) : M.notFound(displayQuery || '—'));
     return;
@@ -539,6 +546,7 @@ async function sendTrack(
   // The audio went out as its own message, so the "searching…" placeholder is no longer needed.
   if (audioSent && options.statusId) await ctx.api.deleteMessage(chatId, options.statusId).catch(() => undefined);
   await saveShare(env.DB, await shareIdFor(track), track).catch((error) => logError('share', error));
+  void react(ctx, '🔥');
 }
 
 /** Opens a track from a card deep link: the lyrics, or the stored translation when asked for. */
