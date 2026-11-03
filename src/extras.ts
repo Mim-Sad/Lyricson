@@ -7,6 +7,7 @@ import type { Config, Env } from './env.js';
 import { describeAiError } from './lib/ai.js';
 import { artistBioDoc, artistCaption, cardCaption, storyDoc, wordsDoc } from './lib/cards.js';
 import { isUserFacing, logError } from './lib/errors.js';
+import { artistRich, storyRich, wordsRich, type RichPart } from './lib/rich.js';
 import { paginate, retryKeyboard, type Doc, type TrackMeta } from './lib/format.js';
 import {
   buildArtistBio,
@@ -109,6 +110,128 @@ export async function sendStatus(ctx: Context, text: string, replyTo?: number): 
     return (await ctx.reply(text, { ...HTML, ...replyParams(replyTo) })).message_id;
   } catch {
     return undefined;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Rich messages (Bot API 10.1+): article-style layout, with classic HTML as the safety net
+// ---------------------------------------------------------------------------
+
+let richEnabled = true;
+/** After a "method not found" answer the Bot API server is assumed too old; retry rich after an hour. */
+let richRetryAt = 0;
+
+export function setRichEnabled(value: boolean): void {
+  richEnabled = value;
+}
+
+export function richAvailable(): boolean {
+  return richEnabled && Date.now() >= richRetryAt;
+}
+
+type RawApi = Record<string, (payload: unknown) => Promise<{ message_id: number }>>;
+
+async function sendRichPart(
+  ctx: Context,
+  part: RichPart,
+  options: { statusId?: number; replyTo?: number; keyboard?: InlineKeyboard },
+): Promise<number | null> {
+  const chatId = chatIdOf(ctx);
+  if (!chatId || !richAvailable()) return null;
+  const raw = ctx.api.raw as unknown as RawApi;
+  const rich_message = { html: part.html, ...(part.rtl ? { is_rtl: true } : {}) };
+  const markup = options.keyboard ? { reply_markup: options.keyboard } : {};
+  const markUnsupported = (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/\(404:|unknown method|method not found/i.test(message)) richRetryAt = Date.now() + 60 * 60_000;
+  };
+
+  if (options.statusId) {
+    try {
+      await raw.editMessageText?.({ chat_id: chatId, message_id: options.statusId, rich_message, ...markup });
+      return options.statusId;
+    } catch (error) {
+      if (error instanceof Error && /message is not modified/i.test(error.message)) return options.statusId;
+      logError('rich.edit', error);
+      markUnsupported(error);
+      // A plain "searching…" message may not be convertible: send a new one and drop the placeholder.
+    }
+  }
+  try {
+    const sent = await raw.sendRichMessage?.({ chat_id: chatId, rich_message, ...markup, ...replyParams(options.replyTo) });
+    if (!sent) return null;
+    if (options.statusId) await ctx.api.deleteMessage(chatId, options.statusId).catch(() => undefined);
+    return sent.message_id;
+  } catch (error) {
+    logError('rich.send', error);
+    markUnsupported(error);
+    return null;
+  }
+}
+
+/**
+ * Sends a result as a rich message when Telegram accepts it, otherwise as the classic
+ * HTML messages. The first part replaces `statusId`; the keyboard sits on the last part.
+ * Returns the id of the last message sent.
+ */
+export async function deliver(
+  ctx: Context,
+  options: {
+    statusId?: number;
+    replyTo?: number;
+    keyboard?: InlineKeyboard;
+    classic: string[];
+    rich?: RichPart[];
+  },
+): Promise<number | undefined> {
+  const rich = options.rich ?? [];
+  if (rich.length > 0 && richAvailable()) {
+    const first = rich[0] as RichPart;
+    const firstId = await sendRichPart(ctx, first, {
+      ...(options.statusId ? { statusId: options.statusId } : {}),
+      ...(options.replyTo ? { replyTo: options.replyTo } : {}),
+      ...(rich.length === 1 && options.keyboard ? { keyboard: options.keyboard } : {}),
+    });
+    if (firstId !== null) {
+      let last = firstId;
+      for (const [offset, part] of rich.slice(1).entries()) {
+        const isLast = offset === rich.length - 2;
+        const id = await sendRichPart(ctx, part, {
+          ...(options.replyTo ? { replyTo: options.replyTo } : {}),
+          ...(isLast && options.keyboard ? { keyboard: options.keyboard } : {}),
+        });
+        if (id === null) break;
+        last = id;
+      }
+      return last;
+    }
+  }
+
+  let last: number | undefined;
+  for (const [index, chunk] of options.classic.entries()) {
+    const isLast = index === options.classic.length - 1;
+    last = await settle(ctx, index === 0 ? options.statusId : undefined, chunk, {
+      ...(isLast && options.keyboard ? { reply_markup: options.keyboard } : {}),
+      ...(options.replyTo ? { replyTo: options.replyTo } : {}),
+    });
+  }
+  return last;
+}
+
+/** Live check for the diagnostics screen: does this Bot API server accept rich messages? */
+export async function probeRich(ctx: Context): Promise<{ ok: boolean; detail: string }> {
+  const chatId = chatIdOf(ctx);
+  if (!chatId) return { ok: false, detail: 'no chat' };
+  try {
+    const raw = ctx.api.raw as unknown as RawApi;
+    const sent = await raw.sendRichMessage?.({
+      chat_id: chatId,
+      rich_message: { html: '<h3>✨ Rich messages work</h3><p>This is a test of the article-style layout.</p><hr/><footer>Lyricson diagnostics</footer>' },
+    });
+    if (sent) richRetryAt = 0;
+    return { ok: Boolean(sent), detail: sent ? 'sendRichMessage accepted' : 'method missing' };
+  } catch (error) {
+    return { ok: false, detail: error instanceof Error ? error.message.slice(0, 160) : String(error) };
   }
 }
 
@@ -297,14 +420,14 @@ async function cachedInsight<T>(
 async function sendDoc(
   c: InsightContext,
   doc: Doc,
-  options: { reuseStatus: boolean; plainBlocks?: boolean },
+  options: { reuseStatus: boolean; plainBlocks?: boolean; rich?: RichPart[] },
 ): Promise<void> {
-  const parts = paginate(doc, options.plainBlocks ? { plainBlocks: true } : {});
-  for (const [index, part] of parts.entries()) {
-    await settle(c.ctx, index === 0 && options.reuseStatus ? c.statusId : undefined, part, {
-      ...(c.replyTo ? { replyTo: c.replyTo } : {}),
-    });
-  }
+  await deliver(c.ctx, {
+    ...(options.reuseStatus && c.statusId ? { statusId: c.statusId } : {}),
+    ...(c.replyTo ? { replyTo: c.replyTo } : {}),
+    classic: paginate(doc, options.plainBlocks ? { plainBlocks: true } : {}),
+    ...(options.rich ? { rich: options.rich } : {}),
+  });
 }
 
 export async function onInsight(
@@ -325,7 +448,9 @@ export async function onInsight(
 
   if (kind === 'story') {
     const story = await cachedInsight<Story>(c, trackKey(track), (ai) => buildStory(ai, track, track.lyrics ?? ''));
-    if (story) await sendDoc(c, storyDoc(track, story), { reuseStatus: true });
+    if (story) {
+      await sendDoc(c, storyDoc(track, story), { reuseStatus: true, rich: storyRich(track, story, M.confidenceLabel(story.confidence)) });
+    }
     return;
   }
 
@@ -333,7 +458,7 @@ export async function onInsight(
     const words = await cachedInsight<VocabWord[]>(c, trackKey(track), (ai) =>
       buildVocabulary(ai, track, track.lyrics ?? ''),
     );
-    if (words) await sendDoc(c, wordsDoc(track, words), { reuseStatus: true });
+    if (words) await sendDoc(c, wordsDoc(track, words), { reuseStatus: true, rich: wordsRich(track, words) });
     return;
   }
 
@@ -388,7 +513,7 @@ export async function onInsight(
   }
 
   const rest = artistBioDoc(artist.name, bio);
-  if (rest) await sendDoc(c, rest, { reuseStatus: false, plainBlocks: true });
+  if (rest) await sendDoc(c, rest, { reuseStatus: false, plainBlocks: true, rich: artistRich(artist.name, bio, artist.fans) });
 }
 
 /** Session payload helper. */

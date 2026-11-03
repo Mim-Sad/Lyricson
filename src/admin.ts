@@ -35,6 +35,7 @@ import {
   setAdminState,
   userCounts,
 } from './lib/store.js';
+import { probeRich } from './extras.js';
 import {
   clearAdminCommands,
   getWebhookInfo,
@@ -214,12 +215,13 @@ export async function handleAdminCallback(
 
     case 'diagnose': {
       const snapshot = await loadSettings(env, cfg, { fresh: true });
-      const [me, lyrics, backup, ai, hook] = await Promise.all([
+      const [me, lyrics, backup, ai, hook, rich] = await Promise.all([
         telegramApi<{ username?: string }>(cfg, 'getMe'),
         probeLrclib(),
         probeFallback(),
         testAiConnection(snapshot.ai),
         getWebhookInfo(cfg),
+        probeRich(ctx),
       ]);
       const mark = (ok: boolean | undefined) => (ok ? '✅' : '⛔️');
       const lines = [
@@ -231,6 +233,7 @@ export async function handleAdminCallback(
         }`,
         `${mark(lyrics.ok)} LRCLIB (جست‌وجوی متن): ${escapeHtml(lyrics.detail)}`,
         `${mark(backup.ok)} lyrics.ovh (منبع دوم): ${escapeHtml(backup.detail)}`,
+        `${mark(rich.ok)} Rich messages: ${escapeHtml(rich.detail)}`,
         `${mark(ai.ok)} هوش مصنوعی (<code>${escapeHtml(ai.model || '—')}</code>): ${escapeHtml(ai.detail ?? '')}`,
         `کلید: ${snapshot.ai.apiKey ? '✅ ثبت شده' : '⛔️ ثبت نشده'} · ادمین‌ها: ${faDigits(snapshot.adminIds.length)}`,
       ];
@@ -349,6 +352,19 @@ export async function handleAdminCallback(
         ? `⛔️ ارسال متوقف شد: ${escapeHtml(fatal)}`
         : `📣 ارسال شد: ${sent} · ناموفق/بلاک: ${blocked}${left > 0 ? ` · باقی‌مانده: ${left} (دوباره «ارسال» را بزن)` : ' · تمام شد ✅'}`;
       await refresh(ctx, env, cfg, 'broadcast', summary);
+      return true;
+    }
+
+    case 'toggleRich': {
+      const snapshot = await loadSettings(env, cfg, { fresh: true });
+      await saveSetting(env, 'rich_messages', snapshot.richMessages ? 'off' : null);
+      await refresh(
+        ctx,
+        env,
+        cfg,
+        'home',
+        snapshot.richMessages ? '✨ پیام‌های Rich خاموش شد؛ قالب کلاسیک استفاده می‌شود.' : '✨ پیام‌های Rich روشن شد.',
+      );
       return true;
     }
 
