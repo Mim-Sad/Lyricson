@@ -114,8 +114,8 @@ describe('AI panels', () => {
     expect(result).toHaveLength(10);
     expect(result[0]?.synonyms).toHaveLength(3);
     const rendered = paginate(wordsDoc({ trackName: 'T', artistName: 'A' }, result)).join('\n');
-    expect(rendered).toContain('<blockquote expandable>');
-    expect(rendered).toContain('🟰');
+    expect(rendered).toContain('هم‌معنی:');
+    expect(rendered).not.toContain('🟰');
   });
 });
 

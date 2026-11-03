@@ -39,26 +39,17 @@ function sourceLabel(track: TrackSummary): string {
   return `📚 Source: ${name}`;
 }
 
-/** A one-column table is the way to centre lines in a rich message. */
-function centered(rows: string[]): string {
-  return `<table>${rows.map((row) => `<tr><td align="center" valign="middle">${row}</td></tr>`).join('')}</table>`;
-}
-
-function identityRows(track: TrackSummary, meta: TrackMeta): string[] {
+function identityBlock(track: TrackSummary, meta: TrackMeta, header?: string): string {
   const title = esc(meta.title ?? track.trackName);
   const linked = meta.link ? `<a href="${esc(meta.link)}">${title}</a>` : title;
   const album = meta.album ?? track.albumName;
-  return [
-    `<b>🎧 Track:</b> ${linked}`,
+  const rows = [
     `<b>👤 Artist:</b> ${esc(meta.artist ?? track.artistName)}`,
     ...(album ? [`<b>💽 Album:</b> ${esc(album)}`] : []),
     ...(meta.date ? [`<b>📅 Date:</b> ${esc(meta.date)}`] : []),
   ];
-}
-
-function identityBlock(track: TrackSummary, meta: TrackMeta, heading?: string): string {
-  const rows = identityRows(track, meta);
-  return centered(heading ? [`<i>${heading}</i>`, ...rows] : rows);
+  // Normal heading and paragraph styles; `align` centres them where the client honours it.
+  return `${header ? `<aside align="center">${header}</aside>` : ''}<h2 align="center">🎧 ${linked}</h2><p align="center">${rows.join('<br/>')}</p>`;
 }
 
 /**
@@ -118,17 +109,18 @@ export function translationRich(
   meta: TrackMeta = {},
   notice = '',
 ): RichPart[] {
-  // Original line in a quote, its translation in a second quote box right below it.
+  // Original line in a quote, its translation as a plain paragraph right below.
   const blocks = translation.lines.map((line) => {
     const note = line.note ? ` <i>(${esc(line.note.replace(/^\(|\)$/g, ''))})</i>` : '';
-    return `<blockquote>${esc(line.source)}</blockquote><aside>${esc(line.text)}${note}</aside>`;
+    return `<blockquote>${esc(line.source)}</blockquote><p>${esc(line.text)}${note}</p>`;
   });
   const summary = [
     translation.theme ? `🧠 <b>مفهوم کلی:</b> ${esc(translation.theme)}` : '',
     translation.mood ? `💫 <b>حال‌وهوا:</b> ${esc(translation.mood)}` : '',
   ].filter(Boolean);
+  // The small centered "Persian translation" label is the only quote box in the header.
   const head = `${identityBlock(track, meta, `🇮🇷 ترجمهٔ ${esc(languageName)}`)}${
-    summary.length > 0 ? `<hr/>${centered(summary)}` : ''
+    summary.length > 0 ? `<aside>${summary.join('<br/>')}</aside>` : ''
   }<hr/>`;
   return paginateRich({
     head,
@@ -169,23 +161,25 @@ export function storyRich(
 }
 
 export function wordsRich(track: Pick<TrackSummary, 'trackName' | 'artistName'>, words: VocabWord[]): RichPart[] {
+  // One calm card per word: the word, its meaning, related words, then a single example quote.
   const blocks = words.map((word, index) => {
-    const title = `<b>${index + 1}. ${esc(word.word)}</b>${word.ipa ? ` <code>/${esc(word.ipa.replace(/^\/|\/$/g, ''))}/</code>` : ''}${
-      word.pos ? ` <i>${esc(word.pos)}</i>` : ''
-    } - ${esc(word.meaning)}`;
-    const rows = [
-      ...(word.synonyms.length > 0 ? [`🟰 ${word.synonyms.map(esc).join(', ')}`] : []),
-      ...(word.antonyms.length > 0 ? [`↔️ ${word.antonyms.map(esc).join(', ')}`] : []),
-      ...(word.usage ? [`💬 <i>${esc(word.usage)}</i>`] : []),
-    ];
-    return rows.length > 0
-      ? `<details><summary>${title}</summary><p>${rows.join('<br/>')}</p></details>`
-      : `<p>${title}</p>`;
+    const ipa = word.ipa ? ` <code>/${esc(word.ipa.replace(/^\/|\/$/g, ''))}/</code>` : '';
+    const pos = word.pos ? ` <i>${esc(word.pos)}</i>` : '';
+    const related = [
+      word.synonyms.length > 0 ? `هم‌معنی: ${word.synonyms.map(esc).join('، ')}` : '',
+      word.antonyms.length > 0 ? `متضاد: ${word.antonyms.map(esc).join('، ')}` : '',
+    ].filter(Boolean);
+    return (
+      `<h3>${index + 1}. ${esc(word.word)}</h3>` +
+      `<p><b>${esc(word.meaning)}</b>${ipa}${pos}</p>` +
+      (related.length > 0 ? `<p>${related.join('<br/>')}</p>` : '') +
+      (word.usage ? `<blockquote>${esc(word.usage)}</blockquote>` : '')
+    );
   });
   return paginateRich({
-    head: `<h2>🎓 کلمات کلیدی «${esc(track.trackName)}»</h2><p><i>از سخت به آسان - روی هر کلمه بزن تا هم‌معنی، متضاد و کاربرد را ببینی</i></p><hr/>`,
+    head: `<h2>🎓 کلمات کلیدی «${esc(track.trackName)}»</h2><p><i>از سخت به آسان</i></p><hr/>`,
     blocks,
-    weight: 3,
+    weight: 4,
     foot: '',
     rtl: true,
   });
