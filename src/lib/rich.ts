@@ -39,16 +39,26 @@ function sourceLabel(track: TrackSummary): string {
   return `📚 Source: ${name}`;
 }
 
-function identityBlock(track: TrackSummary, meta: TrackMeta): string {
+/** A one-column table is the way to centre lines in a rich message. */
+function centered(rows: string[]): string {
+  return `<table>${rows.map((row) => `<tr><td align="center" valign="middle">${row}</td></tr>`).join('')}</table>`;
+}
+
+function identityRows(track: TrackSummary, meta: TrackMeta): string[] {
   const title = esc(meta.title ?? track.trackName);
   const linked = meta.link ? `<a href="${esc(meta.link)}">${title}</a>` : title;
   const album = meta.album ?? track.albumName;
-  const rows = [
+  return [
+    `<b>🎧 Track:</b> ${linked}`,
     `<b>👤 Artist:</b> ${esc(meta.artist ?? track.artistName)}`,
     ...(album ? [`<b>💽 Album:</b> ${esc(album)}`] : []),
     ...(meta.date ? [`<b>📅 Date:</b> ${esc(meta.date)}`] : []),
   ];
-  return `<h2>🎧 ${linked}</h2><p>${rows.join('<br/>')}</p>`;
+}
+
+function identityBlock(track: TrackSummary, meta: TrackMeta, heading?: string): string {
+  const rows = identityRows(track, meta);
+  return centered(heading ? [`<i>${heading}</i>`, ...rows] : rows);
 }
 
 /**
@@ -108,16 +118,17 @@ export function translationRich(
   meta: TrackMeta = {},
   notice = '',
 ): RichPart[] {
+  // Original line in a quote, its translation in a second quote box right below it.
   const blocks = translation.lines.map((line) => {
     const note = line.note ? ` <i>(${esc(line.note.replace(/^\(|\)$/g, ''))})</i>` : '';
-    return `<blockquote>${esc(line.source)}</blockquote><p>${esc(line.text)}${note}</p>`;
+    return `<blockquote>${esc(line.source)}</blockquote><aside>${esc(line.text)}${note}</aside>`;
   });
   const summary = [
     translation.theme ? `🧠 <b>مفهوم کلی:</b> ${esc(translation.theme)}` : '',
     translation.mood ? `💫 <b>حال‌وهوا:</b> ${esc(translation.mood)}` : '',
   ].filter(Boolean);
-  const head = `<h2>🇮🇷 ترجمهٔ ${esc(languageName)}</h2>${identityBlock(track, meta)}${
-    summary.length > 0 ? `<aside>${summary.join('<br/>')}</aside>` : ''
+  const head = `${identityBlock(track, meta, `🇮🇷 ترجمهٔ ${esc(languageName)}`)}${
+    summary.length > 0 ? `<hr/>${centered(summary)}` : ''
   }<hr/>`;
   return paginateRich({
     head,
@@ -147,7 +158,7 @@ export function storyRich(
     ...(story.summary ? [`<p>${withBreaks(story.summary)}</p>`] : []),
     ...story.points.map((point) => `<h4>▫️ ${esc(point.title)}</h4><p>${withBreaks(point.text)}</p>`),
   ];
-  const sources = story.sources.length > 0 ? `<p>🔗 <i>منابع:</i> ${story.sources.map(link).join(' · ')}</p>` : '';
+  const sources = story.sources.length > 0 ? `<p>🔗 <i>منابع:</i> ${story.sources.map(link).join(' | ')}</p>` : '';
   return paginateRich({
     head: `<h2>📖 داستان «${esc(track.trackName)}»</h2><p>🎤 ${esc(track.artistName)}</p><hr/>`,
     blocks,
@@ -161,7 +172,7 @@ export function wordsRich(track: Pick<TrackSummary, 'trackName' | 'artistName'>,
   const blocks = words.map((word, index) => {
     const title = `<b>${index + 1}. ${esc(word.word)}</b>${word.ipa ? ` <code>/${esc(word.ipa.replace(/^\/|\/$/g, ''))}/</code>` : ''}${
       word.pos ? ` <i>${esc(word.pos)}</i>` : ''
-    } — ${esc(word.meaning)}`;
+    } - ${esc(word.meaning)}`;
     const rows = [
       ...(word.synonyms.length > 0 ? [`🟰 ${word.synonyms.map(esc).join(', ')}`] : []),
       ...(word.antonyms.length > 0 ? [`↔️ ${word.antonyms.map(esc).join(', ')}`] : []),
@@ -172,7 +183,7 @@ export function wordsRich(track: Pick<TrackSummary, 'trackName' | 'artistName'>,
       : `<p>${title}</p>`;
   });
   return paginateRich({
-    head: `<h2>🎓 کلمات کلیدی «${esc(track.trackName)}»</h2><p><i>از سخت به آسان — روی هر کلمه بزن تا هم‌معنی، متضاد و کاربرد را ببینی</i></p><hr/>`,
+    head: `<h2>🎓 کلمات کلیدی «${esc(track.trackName)}»</h2><p><i>از سخت به آسان - روی هر کلمه بزن تا هم‌معنی، متضاد و کاربرد را ببینی</i></p><hr/>`,
     blocks,
     weight: 3,
     foot: '',
@@ -187,7 +198,7 @@ export function artistRich(name: string, bio: ArtistBio, fans?: number): RichPar
     .filter(Boolean)
     .map((part) => `<p>${withBreaks(part)}</p>`);
   const stats = fans ? `<p>❤️ ${esc(fans.toLocaleString('en-US'))} شنونده</p>` : '';
-  const sources = bio.sources.length > 0 ? `<hr/><p>🔗 <i>منابع:</i> ${bio.sources.map(link).join(' · ')}</p>` : '';
+  const sources = bio.sources.length > 0 ? `<hr/><p>🔗 <i>منابع:</i> ${bio.sources.map(link).join(' | ')}</p>` : '';
   return paginateRich({
     head: `<h2>👤 ${esc(name)}</h2>${stats}<hr/>`,
     blocks: paragraphs.length > 0 ? paragraphs : [`<p>${withBreaks(bio.caption)}</p>`],
@@ -209,13 +220,13 @@ export function welcomeRich(): RichPart[] {
         '<p><i>متن موزیک + ترجمهٔ خط‌به‌خط، با معنی استعاره‌ها</i></p><hr/>' +
         '<h3>فقط یکی از این‌ها را بفرست 👇</h3>' +
         '<ul>' +
-        '<li>🎼 <b>اسم موزیک</b> — <code>Coldplay Yellow</code></li>' +
-        '<li>🔗 <b>لینک</b> — یوتیوب، اسپاتیفای، ساندکلاد، دیزر، اپل موزیک</li>' +
+        '<li>🎼 <b>اسم موزیک</b> - <code>Coldplay Yellow</code></li>' +
+        '<li>🔗 <b>لینک</b> - یوتیوب، اسپاتیفای، ساندکلاد، دیزر، اپل موزیک</li>' +
         '<li>🎧 <b>فایل موزیک</b> یا 🎬 <b>ویدیو</b> (با کپشن)</li>' +
-        '<li>📜 <b>خودِ متن</b> — پیستش کن</li>' +
+        '<li>📜 <b>خودِ متن</b> - پیستش کن</li>' +
         '</ul>' +
         '<aside>بعد از متن اصلی، دکمهٔ «🇮🇷 ترجمهٔ خط‌به‌خط» را بزن؛ مفهوم کلی آهنگ و معنی استعاره‌ها هم می‌آید.</aside>' +
-        '<hr/><footer>/help راهنما · /lang زبان ترجمه</footer>',
+        '<hr/><footer>/help راهنما | /lang زبان ترجمه</footer>',
     },
   ];
 }
@@ -237,8 +248,8 @@ export function helpRich(quotaLine: string, adminSection: boolean): RichPart[] {
         '<h3>برای نتیجهٔ بهتر</h3>' +
         '<ul><li>«خواننده + اسم آهنگ» دقیق‌ترین ورودی است.</li><li>لینک خودش اسم و خواننده را می‌دهد.</li><li>فایل موزیک بهتر است تگ داشته باشد، وگرنه کپشن بگذار.</li></ul>' +
         `<aside>${esc(quotaLine)}</aside>` +
-        (adminSection ? '<h3>🛠 ادمین</h3><p>/admin — هوش مصنوعی، کش، ادمین‌ها، اطلاع‌رسانی، حالت تعمیر و وبهوک.</p>' : '') +
-        '<hr/><footer>/lang — زبان ترجمه</footer>',
+        (adminSection ? '<h3>🛠 ادمین</h3><p>/admin - هوش مصنوعی، کش، ادمین‌ها، اطلاع‌رسانی، حالت تعمیر و وبهوک.</p>' : '') +
+        '<hr/><footer>/lang - زبان ترجمه</footer>',
     },
   ];
 }

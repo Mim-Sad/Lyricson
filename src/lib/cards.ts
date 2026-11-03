@@ -4,7 +4,7 @@ import type { ArtistBio, Story, VocabWord } from './insights.js';
 import type { MusicInfo } from './music.js';
 import type { TrackSummary } from './types.js';
 
-const RULE = '┄┄┄┄┄┄┄┄┄┄┄┄';
+const RULE = '------------';
 
 export function sourcesLine(sources: string[]): string {
   if (sources.length === 0) return '';
@@ -15,7 +15,7 @@ export function sourcesLine(sources: string[]): string {
     } catch {
       /* keep the raw url */
     }
-    return `<a href="${escapeHtml(url).replace(/"/g, '&quot;')}">${escapeHtml(host)}</a>${index < sources.length - 1 ? ' · ' : ''}`;
+    return `<a href="${escapeHtml(url).replace(/"/g, '&quot;')}">${escapeHtml(host)}</a>${index < sources.length - 1 ? ' | ' : ''}`;
   });
   return `🔗 <i>منابع:</i> ${links.join('')}`;
 }
@@ -31,7 +31,7 @@ export function cardCaption(
     `📜 ${anchor(links.lyrics, 'Lyrics')}`,
     `🌐 ${anchor(links.translation, 'Lyrics + Translation')}`,
     ...(links.listen.length > 0
-      ? [`🔊 Listen on ${links.listen.map((item) => anchor(item.url, escapeHtml(item.label))).join(' · ')}`]
+      ? [`🔊 Listen on ${links.listen.map((item) => anchor(item.url, escapeHtml(item.label))).join(' | ')}`]
       : []),
   ];
   return [...identityLines(track, meta), RULE, `<blockquote>${rows.join('\n')}</blockquote>`].join('\n');
@@ -70,7 +70,7 @@ export function wordsDoc(track: Pick<TrackSummary, 'trackName' | 'artistName'>, 
   return {
     head: [
       `🎓 <b>کلمات کلیدی «${escapeHtml(track.trackName)}»</b>`,
-      '<i>از سخت به آسان · معنی، تلفظ، هم‌معنی، متضاد و کاربرد</i>',
+      '<i>از سخت به آسان | معنی، تلفظ، هم‌معنی، متضاد و کاربرد</i>',
       RULE,
     ].join('\n'),
     blocks,
@@ -78,16 +78,24 @@ export function wordsDoc(track: Pick<TrackSummary, 'trackName' | 'artistName'>, 
   };
 }
 
-export function artistCaption(name: string, bio: ArtistBio, fans?: number): string {
-  const head = `👤 <b>${escapeHtml(name)}</b>${fans ? `  ·  ❤️ ${fans.toLocaleString('en-US')} شنونده` : ''}`;
-  const caption = `${head}\n${RULE}\n${escapeHtml(bio.caption)}`;
+/** Photo caption: name and listeners, plus the biography itself when it is short enough to fit. */
+export function artistCaption(name: string, text: string, fans?: number): string {
+  const head = `👤 <b>${escapeHtml(name)}</b>${fans ? `  |  ❤️ ${fans.toLocaleString('en-US')} شنونده` : ''}`;
+  const caption = text ? `${head}\n${RULE}\n${escapeHtml(text)}` : head;
   // Photo captions are limited to 1024 characters.
-  return caption.length <= 1000 ? caption : `${caption.slice(0, 997).replace(/\s+\S*$/, '')}…`;
+  return caption.length <= 1000 ? caption : `${caption.slice(0, 997).replace(/\s+\S*$/, '')}...`;
 }
 
-export function artistBioDoc(name: string, bio: ArtistBio): Doc | null {
+/** The biography fits into the photo caption: no second message needed. */
+export function bioFitsCaption(name: string, bio: ArtistBio, fans?: number): boolean {
+  if (bio.sources.length > 0) return false;
+  const head = `👤 <b>${escapeHtml(name)}</b>${fans ? `  |  ❤️ ${fans.toLocaleString('en-US')} شنونده` : ''}`;
+  return `${head}\n${RULE}\n${escapeHtml(bio.bio)}`.length <= 1000;
+}
+
+export function artistBioDoc(name: string, bio: ArtistBio, always = false): Doc | null {
   const rest = bio.bio.trim();
-  if (!rest || rest === bio.caption.trim()) return null;
+  if (!rest || (!always && rest === bio.caption.trim())) return null;
   return {
     head: [`📚 <b>زندگی‌نامهٔ ${escapeHtml(name)}</b>`, RULE].join('\n'),
     blocks: escapeHtml(rest).split(/\n{2,}/).map((part) => part.trim()).filter(Boolean),

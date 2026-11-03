@@ -14,7 +14,8 @@ const TRACK: TrackSummary = {
 describe('rich builders', () => {
   it('builds an article: heading with the linked title, identity rows, stanzas with <br/>, footer', () => {
     const [part] = lyricsRich(TRACK, { link: 'https://open.spotify.com/track/x', date: '2000-07-10' });
-    expect(part?.html).toContain('<h2>🎧 <a href="https://open.spotify.com/track/x">Yellow</a></h2>');
+    expect(part?.html).toContain('<b>🎧 Track:</b> <a href="https://open.spotify.com/track/x">Yellow</a>');
+    expect(part?.html).toContain('<td align="center"');
     expect(part?.html).toContain('<b>📅 Date:</b> 2000-07-10');
     expect(part?.html).toContain('<p>Look at the stars<br/>Look how they shine for you</p>');
     expect(part?.html).toContain('&lt;b&gt;');
@@ -28,8 +29,8 @@ describe('rich builders', () => {
       { theme: 'عشق', mood: 'آرام', model: 'm', missing: 0, lines: [{ i: 1, source: 'Look', text: 'نگاه کن', note: '(اشاره)' }] },
       'فارسی',
     );
-    expect(part?.html).toContain('<blockquote>Look</blockquote><p>نگاه کن <i>(اشاره)</i></p>');
-    expect(part?.html).toContain('<aside>');
+    expect(part?.html).toContain('<blockquote>Look</blockquote><aside>نگاه کن <i>(اشاره)</i></aside>');
+    expect(part?.html).toContain('<i>🇮🇷 ترجمهٔ فارسی</i>');
     expect(part?.rtl).toBe(true);
   });
 

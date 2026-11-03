@@ -5,13 +5,14 @@
 import { InlineKeyboard, InputFile, type Context } from 'grammy';
 import type { Config, Env } from './env.js';
 import { describeAiError } from './lib/ai.js';
-import { artistBioDoc, artistCaption, cardCaption, storyDoc, wordsDoc } from './lib/cards.js';
+import { artistBioDoc, artistCaption, bioFitsCaption, cardCaption, storyDoc, wordsDoc } from './lib/cards.js';
 import { isUserFacing, logError } from './lib/errors.js';
 import { artistRich, storyRich, wordsRich, type RichPart } from './lib/rich.js';
 import { paginate, retryKeyboard, type Doc, type TrackMeta } from './lib/format.js';
 import {
   buildArtistBio,
   fallbackArtistBio,
+  looksPersian,
   buildStory,
   buildVocabulary,
   type ArtistBio,
@@ -445,11 +446,13 @@ async function cachedInsight<T>(
   build: (ai: SettingsSnapshot['ai']) => Promise<T>,
   /** Used (but never cached) when the AI fails, so the user still gets an answer. */
   fallback?: () => T,
+  /** Cached values failing this check (e.g. an old English biography) are regenerated. */
+  isValid?: (value: T) => boolean,
 ): Promise<T | null> {
   const settings = await loadSettings(c.env, c.cfg);
   const cacheKey = `x:${c.kind}:${await sha256Hex(key)}`;
   const cached = await cacheGet<T>(c.env.DB, 'translation_cache', cacheKey, 0);
-  if (cached) return cached;
+  if (cached && (!isValid || isValid(cached))) return cached;
 
   if (!settings.ai.apiKey) {
     await settle(c.ctx, c.statusId, M.AI_NOT_CONFIGURED, { ...(c.replyTo ? { replyTo: c.replyTo } : {}) });
@@ -531,10 +534,13 @@ export async function onInsight(
     normalize(name),
     (ai) => buildArtistBio(ai, artist),
     () => fallbackArtistBio(artist),
+    (value) => looksPersian(value.bio),
   );
   if (!bio) return;
 
-  const caption = artistCaption(artist.name, bio, artist.fans);
+  // One piece of content: a short biography rides in the photo caption, a long one is a single article.
+  const fits = bioFitsCaption(artist.name, bio, artist.fans);
+  const caption = artistCaption(artist.name, fits ? bio.bio : '', artist.fans);
   const photos = [...new Set([...artist.photos, ...artist.albums])].slice(0, 4);
   let sentWithPhotos = false;
   try {
@@ -562,14 +568,19 @@ export async function onInsight(
       logError('artist.photo', error);
     }
   }
-  if (sentWithPhotos) {
-    if (statusId) await ctx.api.deleteMessage(chatId, statusId).catch(() => undefined);
-  } else {
-    await settle(ctx, statusId, caption, { ...(replyTo ? { replyTo } : {}) });
-  }
+  if (sentWithPhotos && statusId) await ctx.api.deleteMessage(chatId, statusId).catch(() => undefined);
 
-  const rest = artistBioDoc(artist.name, bio);
-  if (rest) await sendDoc(c, rest, { reuseStatus: false, plainBlocks: true, rich: artistRich(artist.name, bio, artist.fans) });
+  // The article carries the full biography when it did not fit the caption (or there is no photo at all).
+  if (!(sentWithPhotos && fits)) {
+    const doc = artistBioDoc(artist.name, { ...bio, bio: bio.bio }, true);
+    if (doc) {
+      await sendDoc(c, doc, {
+        reuseStatus: !sentWithPhotos,
+        plainBlocks: true,
+        rich: artistRich(artist.name, bio, artist.fans),
+      });
+    }
+  }
 }
 
 /** Session payload helper. */
