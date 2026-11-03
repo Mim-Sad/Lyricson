@@ -60,19 +60,15 @@ export function wordsDoc(track: Pick<TrackSummary, 'trackName' | 'artistName'>, 
       `<b>${index + 1}. ${escapeHtml(word.word)}</b>${word.ipa ? `  <code>/${escapeHtml(word.ipa.replace(/^\/|\/$/g, ''))}/</code>` : ''}${
         word.pos ? `  <i>${escapeHtml(word.pos)}</i>` : ''
       }`,
-      `📘 ${escapeHtml(word.meaning)}`,
-      ...(word.synonyms.length > 0 ? [`🟰 ${word.synonyms.map(escapeHtml).join(', ')}`] : []),
-      ...(word.antonyms.length > 0 ? [`↔️ ${word.antonyms.map(escapeHtml).join(', ')}`] : []),
-      ...(word.usage ? [`💬 <i>${escapeHtml(word.usage)}</i>`] : []),
+      escapeHtml(word.meaning),
+      ...(word.synonyms.length > 0 ? [`هم‌معنی: ${word.synonyms.map(escapeHtml).join('، ')}`] : []),
+      ...(word.antonyms.length > 0 ? [`متضاد: ${word.antonyms.map(escapeHtml).join('، ')}`] : []),
+      ...(word.usage ? [`<i>${escapeHtml(word.usage)}</i>`] : []),
     ];
-    return `<blockquote expandable>${lines.join('\n')}</blockquote>`;
+    return lines.join('\n');
   });
   return {
-    head: [
-      `🎓 <b>کلمات کلیدی «${escapeHtml(track.trackName)}»</b>`,
-      '<i>از سخت به آسان | معنی، تلفظ، هم‌معنی، متضاد و کاربرد</i>',
-      RULE,
-    ].join('\n'),
+    head: [`🎓 <b>کلمات کلیدی «${escapeHtml(track.trackName)}»</b>`, '<i>از سخت به آسان</i>', RULE].join('\n'),
     blocks,
     foot: '',
   };

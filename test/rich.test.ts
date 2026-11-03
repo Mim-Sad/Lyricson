@@ -14,9 +14,9 @@ const TRACK: TrackSummary = {
 describe('rich builders', () => {
   it('builds an article: heading with the linked title, identity rows, stanzas with <br/>, footer', () => {
     const [part] = lyricsRich(TRACK, { link: 'https://open.spotify.com/track/x', date: '2000-07-10' });
-    expect(part?.html).toContain('<b>🎧 Track:</b> <a href="https://open.spotify.com/track/x">Yellow</a>');
-    expect(part?.html).toContain('<td align="center"');
+    expect(part?.html).toContain('<h2 align="center">🎧 <a href="https://open.spotify.com/track/x">Yellow</a></h2>');
     expect(part?.html).toContain('<b>📅 Date:</b> 2000-07-10');
+    expect(part?.html).not.toContain('<table');
     expect(part?.html).toContain('<p>Look at the stars<br/>Look how they shine for you</p>');
     expect(part?.html).toContain('&lt;b&gt;');
     expect(part?.html).toContain('<footer>📚 Source: LRCLIB</footer>');
@@ -29,8 +29,9 @@ describe('rich builders', () => {
       { theme: 'عشق', mood: 'آرام', model: 'm', missing: 0, lines: [{ i: 1, source: 'Look', text: 'نگاه کن', note: '(اشاره)' }] },
       'فارسی',
     );
-    expect(part?.html).toContain('<blockquote>Look</blockquote><aside>نگاه کن <i>(اشاره)</i></aside>');
-    expect(part?.html).toContain('<i>🇮🇷 ترجمهٔ فارسی</i>');
+    expect(part?.html).toContain('<blockquote>Look</blockquote><p>نگاه کن <i>(اشاره)</i></p>');
+    expect(part?.html).toContain('<aside align="center">🇮🇷 ترجمهٔ فارسی</aside>');
+    expect(part?.html).toContain('<aside>🧠');
     expect(part?.rtl).toBe(true);
   });
 
@@ -50,7 +51,8 @@ describe('rich builders', () => {
     const words = wordsRich({ trackName: 'T', artistName: 'A' }, [
       { word: 'ephemeral', ipa: 'ɪˈfem(ə)rəl', pos: 'adj', meaning: 'زودگذر', synonyms: ['fleeting'], antonyms: ['lasting'], usage: 'کاربرد' },
     ]);
-    expect(words[0]?.html).toContain('<details><summary>');
+    expect(words[0]?.html).toContain('<h3>1. ephemeral</h3>');
+    expect(words[0]?.html).not.toContain('<details');
     const artist = artistRich('Coldplay', { caption: 'c', bio: 'p1\n\np2', sources: [] }, 1234567);
     expect(artist[0]?.html).toContain('<p>p1</p><p>p2</p>');
     expect(artist[0]?.html).toContain('1,234,567');
